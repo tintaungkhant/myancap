@@ -97,3 +97,22 @@ export async function sendDocument(
   }
   return fileIdFrom(await res.json(), "document");
 }
+
+/** Re-send an already-uploaded file by its file_id (no re-upload). */
+async function sendById(
+  method: string,
+  key: "video" | "audio" | "document",
+  chatId: number,
+  fileId: string,
+): Promise<void> {
+  const res = await fetch(apiUrl(method), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, [key]: fileId }),
+  });
+  if (!res.ok) throw new Error(`${method} (by id) failed: ${res.status} ${await res.text()}`);
+}
+
+export const sendVideoById = (chatId: number, fileId: string) => sendById("sendVideo", "video", chatId, fileId);
+export const sendAudioById = (chatId: number, fileId: string) => sendById("sendAudio", "audio", chatId, fileId);
+export const sendDocumentById = (chatId: number, fileId: string) => sendById("sendDocument", "document", chatId, fileId);

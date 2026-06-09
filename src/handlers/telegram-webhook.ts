@@ -1,76 +1,106 @@
-/**
- * Telegram webhook handler.
- *
- * User sends an SRT as a text message -> bot replies with a timed MP3.
- *
- * Env vars:
- *   TELEGRAM_BOT_TOKEN      - bot token
- *   TELEGRAM_WEBHOOK_SECRET - (optional) secret token to verify requests
- */
+/** Telegram webhook ingress: gate the update, then enqueue a pipeline job. */
+import type { Database } from "bun:sqlite";
+import { getConfig } from "../config";
+import { extractYouTubeId } from "../services/youtube";
+import {
+  sendMessage,
+  sendVideoById,
+  sendAudioById,
+  sendDocumentById,
+} from "../services/telegram";
+import {
+  markUpdateProcessed,
+  getCachedVideo,
+  hasActiveJob,
+  insertJob,
+} from "../services/store";
+import { newJobId, createJobDir, type Job } from "../pipeline/job";
+import type { Semaphore } from "../pipeline/queue";
+import { runJob } from "../pipeline/run";
 
-import { srtToSpeech } from "../services/srt-tts";
-import { wavToMp3 } from "../services/audio";
-import { sendAudio, sendDocument, sendMessage } from "../services/telegram";
-
-type TelegramUpdate = {
-  message?: {
-    chat: { id: number };
-    text?: string;
-  };
+type Update = {
+  update_id?: number;
+  message?: { chat: { id: number }; from?: { id: number }; text?: string };
 };
 
-/** Does the text look like an SRT (has a timestamp arrow)? */
-function looksLikeSrt(text: string): boolean {
-  return /\d{2}:\d{2}:\d{2},\d{3}\s*-->/.test(text);
-}
-
-/** Generate audio and reply. Runs in background; errors are reported to chat. */
-async function generateAndReply(chatId: number, srt: string): Promise<void> {
-  try {
-    const wav = await srtToSpeech(srt);
-    const mp3 = await wavToMp3(wav);
-    await sendDocument(
-      chatId,
-      new TextEncoder().encode(srt),
-      "recap.srt",
-      "application/x-subrip"
-    );
-    await sendAudio(chatId, mp3);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    await sendMessage(chatId, `❌ Failed: ${msg}`).catch(() => {});
-  }
-}
-
 /**
- * Handle one webhook update. Returns immediately (acks Telegram) and
- * does the slow TTS work in the background.
+ * Injectable surface — defaults wire the real implementations. Tests pass stubs
+ * (avoids Bun's process-global `mock.module` leakage between files).
  */
-export function handleUpdate(update: TelegramUpdate): void {
+export type WebhookDeps = {
+  runJob: typeof runJob;
+  sendMessage: typeof sendMessage;
+  sendVideoById: typeof sendVideoById;
+  sendAudioById: typeof sendAudioById;
+  sendDocumentById: typeof sendDocumentById;
+};
+
+const defaultDeps: WebhookDeps = {
+  runJob,
+  sendMessage,
+  sendVideoById,
+  sendAudioById,
+  sendDocumentById,
+};
+
+/** Verify the optional Telegram secret-token header. */
+export function verifySecret(header: string | undefined): boolean {
+  const secret = getConfig().telegramWebhookSecret;
+  if (!secret) return true;
+  return header === secret;
+}
+
+/** Handle one webhook update. Acks fast; heavy work runs in the background. */
+export async function handleUpdate(
+  db: Database,
+  sem: Semaphore,
+  update: Update,
+  deps: WebhookDeps = defaultDeps,
+): Promise<void> {
   const msg = update.message;
   if (!msg?.text) return;
 
   const chatId = msg.chat.id;
-  const text = msg.text.trim();
+  const telegramId = msg.from?.id ?? chatId;
+  const now = Date.now();
 
-  if (!looksLikeSrt(text)) {
-    sendMessage(
-      chatId,
-      "Send me an SRT subtitle as text and I'll voice it as an MP3."
-    ).catch(() => {});
+  // Gate 2: dedup Telegram retries.
+  if (update.update_id !== undefined && !markUpdateProcessed(db, update.update_id, now)) {
     return;
   }
 
-  console.log('hi');
+  // Gate 3: must be a YouTube link.
+  const youtubeId = extractYouTubeId(msg.text);
+  if (!youtubeId) {
+    await deps.sendMessage(chatId, "Send me a YouTube link.").catch(() => {});
+    return;
+  }
 
-  sendMessage(chatId, "🎙️ Generating audio…").catch(() => {});
-  // Fire-and-forget: do not block the webhook response.
-  void generateAndReply(chatId, text);
-}
+  const cfg = getConfig();
 
-/** Verify the optional Telegram secret-token header. */
-export function verifySecret(header: string | undefined): boolean {
-  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  if (!secret) return true; // not configured -> skip check
-  return header === secret;
+  // Gate 4: cache hit → resend the three files, no job.
+  const cached = getCachedVideo(db, youtubeId, cfg.ttsVoice);
+  if (cached) {
+    await deps.sendMessage(chatId, "✅ Sent (cached)").catch(() => {});
+    await deps.sendVideoById(chatId, cached.videoFileId).catch(() => {});
+    await deps.sendDocumentById(chatId, cached.srtFileId).catch(() => {});
+    await deps.sendAudioById(chatId, cached.audioFileId).catch(() => {});
+    return;
+  }
+
+  // Gate 5: one active job per user.
+  if (hasActiveJob(db, telegramId)) {
+    await deps.sendMessage(chatId, "⏳ You already have a video in progress — wait for it to finish.").catch(() => {});
+    return;
+  }
+
+  // Gate 6: enqueue.
+  const id = newJobId();
+  const url = `https://www.youtube.com/watch?v=${youtubeId}`;
+  insertJob(db, { id, telegramId, url, youtubeId, now });
+  const dir = await createJobDir(id);
+  await deps.sendMessage(chatId, "🎬 Working on it…").catch(() => {});
+
+  const job: Job = { id, telegramId, chatId, url, youtubeId, dir };
+  void sem.run(() => deps.runJob(db, job));
 }

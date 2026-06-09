@@ -1,0 +1,18 @@
+services:
+  myancap:
+    build: .
+    container_name: myancap
+    env_file: .env
+    # Override these regardless of .env so container internals stay consistent.
+    environment:
+      PORT: "3000"
+      DATABASE_PATH: /data/myancap.db
+      WORK_DIR: /tmp/myancap
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    volumes:
+      - myancap-data:/data
+    restart: unless-stopped
+
+volumes:
+  myancap-data:

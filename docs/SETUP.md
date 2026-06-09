@@ -49,7 +49,16 @@ bun run dev
 # Docker (mount a volume for the SQLite cache)
 docker build -t myancap .
 docker run --env-file .env -p 3000:3000 -v myancap-data:/data myancap
+
+# Or with Compose (handles the volume + restart policy for you)
+docker compose up --build -d     # start
+docker compose logs -f           # tail logs
+docker compose down              # stop
 ```
+
+Compose reads `.env`, forces the container's internal `PORT`/`DATABASE_PATH`/
+`WORK_DIR`, and persists the cache in the `myancap-data` named volume. Override
+the published host port with `HOST_PORT=8080 docker compose up -d`.
 
 ## Expose + register the Telegram webhook
 

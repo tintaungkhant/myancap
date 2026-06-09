@@ -24,7 +24,7 @@ export type TtsOptions = {
 export const DEFAULT_VOICE = "my-MM-ThihaNeural";
 const DEFAULT_FORMAT = "audio-16khz-128kbitrate-mono-mp3";
 
-function escapeXml(text: string): string {
+export function escapeXml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -51,6 +51,19 @@ export async function synthesizeSpeech(
   text: string,
   options: TtsOptions = {}
 ): Promise<ArrayBuffer> {
+  const voice = options.voice ?? DEFAULT_VOICE;
+  const ssml = buildSsml(text, voice, options.rate);
+  return synthesizeSsml(ssml, options.format ?? DEFAULT_FORMAT);
+}
+
+/**
+ * Synthesize a full, pre-built SSML document. Returns audio as an ArrayBuffer.
+ * Used for batched multi-cue requests.
+ */
+export async function synthesizeSsml(
+  ssml: string,
+  format: string = DEFAULT_FORMAT,
+): Promise<ArrayBuffer> {
   const key = process.env.AZURE_SPEECH_KEY;
   const region = process.env.AZURE_SPEECH_REGION;
 
@@ -59,11 +72,6 @@ export async function synthesizeSpeech(
       "Missing AZURE_SPEECH_KEY or AZURE_SPEECH_REGION env var"
     );
   }
-
-  const voice = options.voice ?? DEFAULT_VOICE;
-  const format = options.format ?? DEFAULT_FORMAT;
-
-  const ssml = buildSsml(text, voice, options.rate);
 
   const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
 

@@ -55,6 +55,16 @@ Wire the services into a job pipeline behind the webhook.
 
 ---
 
+## Implementation note (deviation from the phase plans)
+
+`pipeline/run.ts` and `handlers/telegram-webhook.ts` use **dependency injection**
+(a `deps` parameter defaulting to the real services) instead of the `mock.module`
+approach sketched in the Phase 2/3 plans. Reason: Bun's `mock.module` is
+process-global and leaks across test files, contaminating `transcribe.test` /
+`telegram.test`. DI keeps each test hermetic. Also, `transcribe.test` asserts a
+`Bearer ` prefix rather than the exact key, because `getConfig()` memoizes and the
+exact value isn't stable across the shared test process.
+
 ## Conventions every phase follows
 
 - TDD: failing test → minimal code → green → commit. Bite-sized steps.

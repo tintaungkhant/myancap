@@ -18,7 +18,7 @@ const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SEC = SAMPLE_RATE * BYTES_PER_SAMPLE;
 const PCM_FORMAT = "raw-16khz-16bit-mono-pcm";
-const DEFAULT_MAX_RATE = 1.5; // never compress beyond this (keeps voice natural)
+const DEFAULT_MAX_RATE = 1; // 1 = constant natural speed (no per-cue speed-up)
 
 export type SrtTtsOptions = {
   voice?: string;

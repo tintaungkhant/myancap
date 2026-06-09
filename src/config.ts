@@ -66,7 +66,7 @@ export function loadConfig(env: Env = process.env): Config {
     azureSpeechKey: req(env, "AZURE_SPEECH_KEY", missing),
     azureSpeechRegion: env.AZURE_SPEECH_REGION || "southeastasia",
     ttsVoice: env.TTS_VOICE || "my-MM-ThihaNeural",
-    maxTtsRate: floatAtLeast(env, "TTS_MAX_RATE", 1, 1.5, errors),
+    maxTtsRate: floatAtLeast(env, "TTS_MAX_RATE", 1, 1, errors),
     ytdlpCookies: env.YTDLP_COOKIES,
     ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
     databasePath: env.DATABASE_PATH || "/data/myancap.db",

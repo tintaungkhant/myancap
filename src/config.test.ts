@@ -14,6 +14,7 @@ test("loads required keys and applies defaults", () => {
   expect(c.azureSpeechRegion).toBe("southeastasia");
   expect(c.ttsVoice).toBe("my-MM-ThihaNeural");
   expect(c.maxVideoSeconds).toBe(900);
+  expect(c.maxTtsRate).toBe(1);
   expect(c.port).toBe(3000);
   expect(c.telegramWebhookSecret).toBeUndefined();
 });

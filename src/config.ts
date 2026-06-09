@@ -18,6 +18,7 @@ export type Config = {
   workDir: string;
   maxConcurrentJobs: number;
   maxVideoSeconds: number;
+  maxVideoHeight: number;
   port: number;
 };
 
@@ -73,6 +74,7 @@ export function loadConfig(env: Env = process.env): Config {
     workDir: env.WORK_DIR || "/tmp/myancap",
     maxConcurrentJobs: posInt(env, "MAX_CONCURRENT_JOBS", 1, errors),
     maxVideoSeconds: posInt(env, "MAX_VIDEO_SECONDS", 900, errors),
+    maxVideoHeight: posInt(env, "MAX_VIDEO_HEIGHT", 480, errors),
     port: posInt(env, "PORT", 3000, errors),
   };
 

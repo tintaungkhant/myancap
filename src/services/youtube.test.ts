@@ -38,8 +38,9 @@ test("parseProbe throws on a bad duration", () => {
 
 test("arg builders include the key flags", () => {
   expect(probeArgs("URL")).toEqual(["--no-download", "--print", "%(duration)s\n%(title)s", "URL"]);
-  expect(videoArgs("URL", "/d")).toContain("--merge-output-format");
-  expect(videoArgs("URL", "/d")).toContain("/d/video.%(ext)s");
+  expect(videoArgs("URL", "/d", 480)).toContain("--merge-output-format");
+  expect(videoArgs("URL", "/d", 480)).toContain("/d/video.%(ext)s");
+  expect(videoArgs("URL", "/d", 480).join(" ")).toContain("height<=480");
   expect(audioArgs("URL", "/d")).toContain("mp3");
   expect(audioArgs("URL", "/d")).toContain("/d/audio.%(ext)s");
 });

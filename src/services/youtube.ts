@@ -35,13 +35,15 @@ export function parseProbe(stdout: string): VideoMeta {
   return { durationSeconds, title: (lines[1] ?? "").trim() };
 }
 
-export function videoArgs(url: string, dir: string): string[] {
+export function videoArgs(url: string, dir: string, maxHeight: number): string[] {
+  const h = maxHeight;
   return [
-    // Prefer H.264 (avc1) + AAC so Telegram can actually render the video —
-    // VP9/AV1 plays as a black screen there. Never fall back to audio-only
-    // (`vcodec!=none` on the last option guards against a blank result).
+    // Prefer H.264 (avc1) + AAC so Telegram can render it (VP9/AV1 = black
+    // screen), capped at <=maxHeight to keep files small. Never fall back to
+    // audio-only; the final `/b[vcodec!=none]` is a last resort if nothing fits
+    // the height cap.
     "-f",
-    "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1]/bv*[ext=mp4]+ba/b[vcodec!=none]",
+    `bv*[vcodec^=avc1][height<=${h}]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1][height<=${h}]/bv*[ext=mp4][height<=${h}]+ba/b[height<=${h}][vcodec!=none]/b[vcodec!=none]`,
     "--merge-output-format", "mp4",
     "-o", `${dir}/video.%(ext)s`,
     url,
@@ -81,7 +83,8 @@ export async function download(
   url: string,
   dir: string,
 ): Promise<{ videoPath: string; audioPath: string }> {
-  await run(videoArgs(url, dir));
+  const cfg = getConfig();
+  await run(videoArgs(url, dir, cfg.maxVideoHeight));
   await run(audioArgs(url, dir));
   return { videoPath: `${dir}/video.mp4`, audioPath: `${dir}/audio.mp3` };
 }

@@ -16,6 +16,7 @@ test("loads required keys and applies defaults", () => {
   expect(c.maxVideoSeconds).toBe(900);
   expect(c.maxVideoHeight).toBe(480);
   expect(c.maxTtsRate).toBe(1);
+  expect(c.ttsConcurrency).toBe(3);
   expect(c.port).toBe(3000);
   expect(c.telegramWebhookSecret).toBeUndefined();
 });

@@ -76,7 +76,11 @@ export async function runJob(
     const mySrt = await deps.translateSrt(enSrt);
 
     stage("tts", "🎙️ မြန်မာသံထုတ်နေသည်");
-    const wav = await deps.srtToSpeech(mySrt, { voice: cfg.ttsVoice, maxRate: cfg.maxTtsRate });
+    const wav = await deps.srtToSpeech(mySrt, {
+      voice: cfg.ttsVoice,
+      maxRate: cfg.maxTtsRate,
+      concurrency: cfg.ttsConcurrency,
+    });
     const wavPath = join(job.dir, "dub.wav");
     const aacPath = join(job.dir, "dub.m4a");
     await Bun.write(wavPath, wav);

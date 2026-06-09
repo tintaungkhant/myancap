@@ -19,13 +19,36 @@ const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SEC = SAMPLE_RATE * BYTES_PER_SAMPLE;
 const PCM_FORMAT = "raw-16khz-16bit-mono-pcm";
 const DEFAULT_MAX_RATE = 1; // 1 = constant natural speed (no per-cue speed-up)
+const DEFAULT_CONCURRENCY = 3; // cap parallel Azure calls to avoid 429 throttling
 
 export type SrtTtsOptions = {
   voice?: string;
   /** Cap on prosody speed-up. Above it, cues overflow (and drift) instead of
    * compressing further — natural voice beats chipmunk. */
   maxRate?: number;
+  /** Max simultaneous TTS requests. Too high → Azure 429. */
+  concurrency?: number;
 };
+
+/** Map with a bounded number of concurrent workers; preserves input order. */
+export async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker() {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return results;
+}
 
 /** Duration of a raw-PCM buffer in seconds. */
 function pcmDuration(bytes: number): number {
@@ -97,9 +120,12 @@ export async function srtToSpeech(
   const cues = parseSrt(srt);
   if (cues.length === 0) throw new Error("No cues parsed from SRT");
 
-  // Synthesize cues in parallel (network-bound), keep order.
-  const audios = await Promise.all(
-    cues.map((cue) => synthCue(cue, options.voice, options.maxRate))
+  // Synthesize cues with bounded concurrency (network-bound), keep order.
+  // All-at-once bursts trip Azure's 429 throttle on longer videos.
+  const audios = await mapLimit(
+    cues,
+    options.concurrency ?? DEFAULT_CONCURRENCY,
+    (cue) => synthCue(cue, options.voice, options.maxRate),
   );
 
   const parts: Uint8Array[] = [];

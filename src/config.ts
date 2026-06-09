@@ -12,6 +12,7 @@ export type Config = {
   azureSpeechRegion: string;
   ttsVoice: string;
   maxTtsRate: number;
+  ttsConcurrency: number;
   ytdlpCookies?: string;
   ytdlpPlayerClient?: string;
   databasePath: string;
@@ -68,6 +69,7 @@ export function loadConfig(env: Env = process.env): Config {
     azureSpeechRegion: env.AZURE_SPEECH_REGION || "southeastasia",
     ttsVoice: env.TTS_VOICE || "my-MM-ThihaNeural",
     maxTtsRate: floatAtLeast(env, "TTS_MAX_RATE", 1, 1, errors),
+    ttsConcurrency: posInt(env, "TTS_CONCURRENCY", 3, errors),
     ytdlpCookies: env.YTDLP_COOKIES,
     ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
     databasePath: env.DATABASE_PATH || "/data/myancap.db",

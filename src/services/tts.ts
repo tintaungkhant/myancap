@@ -67,21 +67,35 @@ export async function synthesizeSpeech(
 
   const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Ocp-Apim-Subscription-Key": key,
-      "Content-Type": "application/ssml+xml",
-      "X-Microsoft-OutputFormat": format,
-      "User-Agent": "auto-recap",
-    },
-    body: ssml,
-  });
+  // Azure throttles bursts with 429 ("Downstream Service Throttled"). Retry a
+  // few times with backoff (honoring Retry-After) before giving up.
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": key,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": format,
+        "User-Agent": "auto-recap",
+      },
+      body: ssml,
+    });
 
-  if (!res.ok) {
+    if (res.ok) return res.arrayBuffer();
+
+    const retryable = res.status === 429 || res.status === 503;
+    if (retryable && attempt < MAX_ATTEMPTS) {
+      const retryAfter = Number(res.headers.get("Retry-After"));
+      const waitMs =
+        Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : 500 * 2 ** (attempt - 1); // 0.5s, 1s, 2s, 4s
+      await Bun.sleep(waitMs);
+      continue;
+    }
+
     const detail = await res.text();
     throw new Error(`TTS failed: ${res.status} ${res.statusText} ${detail}`);
   }
-
-  return res.arrayBuffer();
 }

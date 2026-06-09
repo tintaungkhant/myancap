@@ -37,7 +37,11 @@ export function parseProbe(stdout: string): VideoMeta {
 
 export function videoArgs(url: string, dir: string): string[] {
   return [
-    "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
+    // Prefer H.264 (avc1) + AAC so Telegram can actually render the video —
+    // VP9/AV1 plays as a black screen there. Never fall back to audio-only
+    // (`vcodec!=none` on the last option guards against a blank result).
+    "-f",
+    "bv*[vcodec^=avc1]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1]/bv*[ext=mp4]+ba/b[vcodec!=none]",
     "--merge-output-format", "mp4",
     "-o", `${dir}/video.%(ext)s`,
     url,

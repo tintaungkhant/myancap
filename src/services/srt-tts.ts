@@ -18,10 +18,13 @@ const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
 const BYTES_PER_SEC = SAMPLE_RATE * BYTES_PER_SAMPLE;
 const PCM_FORMAT = "raw-16khz-16bit-mono-pcm";
-const MAX_RATE = 2.5; // never compress beyond this
+const DEFAULT_MAX_RATE = 1.5; // never compress beyond this (keeps voice natural)
 
 export type SrtTtsOptions = {
   voice?: string;
+  /** Cap on prosody speed-up. Above it, cues overflow (and drift) instead of
+   * compressing further — natural voice beats chipmunk. */
+  maxRate?: number;
 };
 
 /** Duration of a raw-PCM buffer in seconds. */
@@ -65,7 +68,7 @@ function pcmToWav(pcm: Uint8Array): Uint8Array {
 }
 
 /** Synthesize one cue, speeding up if its speech overruns the window. */
-async function synthCue(cue: Cue, voice?: string): Promise<Uint8Array> {
+async function synthCue(cue: Cue, voice?: string, maxRate = DEFAULT_MAX_RATE): Promise<Uint8Array> {
   const window = cue.end - cue.start;
 
   const first = new Uint8Array(
@@ -73,7 +76,10 @@ async function synthCue(cue: Cue, voice?: string): Promise<Uint8Array> {
   );
   if (pcmDuration(first.length) <= window || window <= 0) return first;
 
-  const rate = Math.min(MAX_RATE, pcmDuration(first.length) / window);
+  const ratio = pcmDuration(first.length) / window;
+  if (ratio <= 1) return first;
+  const rate = Math.min(maxRate, ratio);
+  if (rate <= 1) return first;
   const fitted = new Uint8Array(
     await synthesizeSpeech(cue.text, { voice, format: PCM_FORMAT, rate })
   );
@@ -93,7 +99,7 @@ export async function srtToSpeech(
 
   // Synthesize cues in parallel (network-bound), keep order.
   const audios = await Promise.all(
-    cues.map((cue) => synthCue(cue, options.voice))
+    cues.map((cue) => synthCue(cue, options.voice, options.maxRate))
   );
 
   const parts: Uint8Array[] = [];

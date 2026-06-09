@@ -76,7 +76,7 @@ export async function runJob(
     const mySrt = await deps.translateSrt(enSrt);
 
     stage("tts", "🎙️ Dubbing…");
-    const wav = await deps.srtToSpeech(mySrt, { voice: cfg.ttsVoice });
+    const wav = await deps.srtToSpeech(mySrt, { voice: cfg.ttsVoice, maxRate: cfg.maxTtsRate });
     const wavPath = join(job.dir, "dub.wav");
     const aacPath = join(job.dir, "dub.m4a");
     await Bun.write(wavPath, wav);

@@ -11,6 +11,7 @@ export type Config = {
   azureSpeechKey: string;
   azureSpeechRegion: string;
   ttsVoice: string;
+  maxTtsRate: number;
   ytdlpCookies?: string;
   ytdlpPlayerClient?: string;
   databasePath: string;
@@ -42,6 +43,17 @@ function posInt(env: Env, key: string, def: number, errors: string[]): number {
   return n;
 }
 
+function floatAtLeast(env: Env, key: string, min: number, def: number, errors: string[]): number {
+  const raw = env[key];
+  if (raw === undefined || raw === "") return def;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min) {
+    errors.push(`${key} must be a number >= ${min} (got "${raw}")`);
+    return def;
+  }
+  return n;
+}
+
 export function loadConfig(env: Env = process.env): Config {
   const missing: string[] = [];
   const errors: string[] = [];
@@ -54,6 +66,7 @@ export function loadConfig(env: Env = process.env): Config {
     azureSpeechKey: req(env, "AZURE_SPEECH_KEY", missing),
     azureSpeechRegion: env.AZURE_SPEECH_REGION || "southeastasia",
     ttsVoice: env.TTS_VOICE || "my-MM-ThihaNeural",
+    maxTtsRate: floatAtLeast(env, "TTS_MAX_RATE", 1, 1.5, errors),
     ytdlpCookies: env.YTDLP_COOKIES,
     ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
     databasePath: env.DATABASE_PATH || "/data/myancap.db",

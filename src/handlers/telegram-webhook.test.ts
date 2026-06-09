@@ -62,7 +62,7 @@ test("busy user → reject, no second job", async () => {
   const calls: string[] = [];
   db.query("INSERT INTO jobs (id, telegram_id, url, youtube_id, status, created_at, updated_at) VALUES ('x',9,'u','y','running',1,1)").run();
   await handleUpdate(db, new Semaphore(1), upd("https://youtu.be/dQw4w9WgXcQ", { from: 9 }), makeDeps(calls));
-  expect(calls.some((c) => c.includes("in progress"))).toBe(true);
+  expect(calls.some((c) => c.includes("⏳"))).toBe(true);
   expect(calls).not.toContain("runJob");
   db.close();
 });

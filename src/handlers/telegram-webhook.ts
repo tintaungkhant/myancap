@@ -60,14 +60,14 @@ export async function handleUpdate(
   // Gate 3: must be a YouTube link.
   const youtubeId = extractYouTubeId(msg.text);
   if (!youtubeId) {
-    await deps.sendMessage(chatId, "Send me a YouTube link.").catch(() => {});
+    await deps.sendMessage(chatId, "❌ YouTube link ပို့ပါ").catch(() => {});
     return;
   }
 
   // Gate 4: one active job per user (the only state that persists, and only
   // while processing).
   if (hasActiveJob(db, telegramId)) {
-    await deps.sendMessage(chatId, "⏳ You already have a video in progress — wait for it to finish.").catch(() => {});
+    await deps.sendMessage(chatId, "⏳ ယခင် video ပြီးအောင် စောင့်ပါ").catch(() => {});
     return;
   }
 

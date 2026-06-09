@@ -100,7 +100,7 @@ export async function runJob(
     await deps.sendAudio(job.chatId, aacBytes, `${base}.m4a`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await deps.sendMessage(job.chatId, `❌ ${msg}`).catch(() => {});
+    await deps.sendMessage(job.chatId, `❌ မအောင်မြင်ပါ — ${msg}`).catch(() => {});
   } finally {
     // Ephemeral: wipe all state for this job — the row (releases the per-user
     // lock) and the temp dir — whether it succeeded or failed.

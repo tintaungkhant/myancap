@@ -17,18 +17,6 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at  INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS videos (
-  youtube_id     TEXT NOT NULL,
-  voice          TEXT NOT NULL,
-  video_file_id  TEXT NOT NULL,
-  srt_file_id    TEXT NOT NULL,
-  audio_file_id  TEXT NOT NULL,
-  title          TEXT,
-  duration       INTEGER,
-  created_at     INTEGER NOT NULL,
-  PRIMARY KEY (youtube_id, voice)
-);
-
 CREATE TABLE IF NOT EXISTS processed_updates (
   update_id   INTEGER PRIMARY KEY,
   seen_at     INTEGER NOT NULL

@@ -2,15 +2,9 @@
 import type { Database } from "bun:sqlite";
 import { getConfig } from "../config";
 import { extractYouTubeId } from "../services/youtube";
-import {
-  sendMessage,
-  sendVideoById,
-  sendAudioById,
-  sendDocumentById,
-} from "../services/telegram";
+import { sendMessage } from "../services/telegram";
 import {
   markUpdateProcessed,
-  getCachedVideo,
   hasActiveJob,
   insertJob,
 } from "../services/store";
@@ -30,17 +24,11 @@ type Update = {
 export type WebhookDeps = {
   runJob: typeof runJob;
   sendMessage: typeof sendMessage;
-  sendVideoById: typeof sendVideoById;
-  sendAudioById: typeof sendAudioById;
-  sendDocumentById: typeof sendDocumentById;
 };
 
 const defaultDeps: WebhookDeps = {
   runJob,
   sendMessage,
-  sendVideoById,
-  sendAudioById,
-  sendDocumentById,
 };
 
 /** Verify the optional Telegram secret-token header. */
@@ -76,19 +64,8 @@ export async function handleUpdate(
     return;
   }
 
-  const cfg = getConfig();
-
-  // Gate 4: cache hit → resend the three files, no job.
-  const cached = getCachedVideo(db, youtubeId, cfg.ttsVoice);
-  if (cached) {
-    await deps.sendMessage(chatId, "✅ Sent (cached)").catch(() => {});
-    await deps.sendVideoById(chatId, cached.videoFileId).catch(() => {});
-    await deps.sendDocumentById(chatId, cached.srtFileId).catch(() => {});
-    await deps.sendAudioById(chatId, cached.audioFileId).catch(() => {});
-    return;
-  }
-
-  // Gate 5: one active job per user.
+  // Gate 4: one active job per user (the only state that persists, and only
+  // while processing).
   if (hasActiveJob(db, telegramId)) {
     await deps.sendMessage(chatId, "⏳ You already have a video in progress — wait for it to finish.").catch(() => {});
     return;

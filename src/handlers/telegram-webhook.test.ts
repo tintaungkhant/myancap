@@ -7,7 +7,6 @@ process.env.GEMINI_API_KEY = "g";
 process.env.AZURE_SPEECH_KEY = "a";
 
 import { openDb } from "../lib/db";
-import { upsertCachedVideo } from "../services/store";
 import { Semaphore } from "../pipeline/queue";
 import { handleUpdate, type WebhookDeps } from "./telegram-webhook";
 import { cleanupJobDir } from "../pipeline/job";
@@ -18,9 +17,6 @@ function makeDeps(calls: string[]): WebhookDeps {
   return {
     runJob: async () => { calls.push("runJob"); },
     sendMessage: async (_c: number, m: string) => { calls.push(`msg:${m}`); },
-    sendVideoById: async () => { calls.push("resend:video"); },
-    sendAudioById: async () => { calls.push("resend:audio"); },
-    sendDocumentById: async () => { calls.push("resend:doc"); },
   };
 }
 
@@ -52,19 +48,12 @@ test("duplicate update_id → dropped silently", async () => {
   db.close();
 });
 
-test("cache hit → resends 3 files, no job", async () => {
+test("repeat link → reprocesses (no cache), enqueues a fresh job", async () => {
   const db = openDb(":memory:");
   const calls: string[] = [];
-  upsertCachedVideo(db, {
-    youtubeId: "dQw4w9WgXcQ", voice: "my-MM-ThihaNeural",
-    videoFileId: "VF", srtFileId: "SF", audioFileId: "AF",
-    title: "t", duration: 10, now: 1,
-  });
-  await handleUpdate(db, new Semaphore(1), upd("https://youtu.be/dQw4w9WgXcQ"), makeDeps(calls));
-  expect(calls).toContain("resend:video");
-  expect(calls).toContain("resend:doc");
-  expect(calls).toContain("resend:audio");
-  expect(calls).not.toContain("runJob");
+  await handleUpdate(db, new Semaphore(1), upd("https://youtu.be/dQw4w9WgXcQ", { from: 77 }), makeDeps(calls));
+  await Bun.sleep(5);
+  expect(calls).toContain("runJob"); // no cache short-circuit
   db.close();
 });
 

@@ -1,6 +1,7 @@
 /**
- * All DB queries live here as named functions. The DB is a cache + record;
- * callers never write raw SQL.
+ * All DB queries live here as named functions. State is ephemeral: a job row
+ * exists only while processing, and is deleted on completion (success or fail).
+ * There is no result cache — every request reprocesses from scratch.
  */
 import type { Database } from "bun:sqlite";
 
@@ -12,17 +13,6 @@ export type NewJob = {
   url: string;
   youtubeId: string;
   now: number; // unix ms
-};
-
-export type CachedVideo = {
-  youtubeId: string;
-  voice: string;
-  videoFileId: string;
-  srtFileId: string;
-  audioFileId: string;
-  title: string | null;
-  duration: number | null;
-  createdAt: number;
 };
 
 export function insertJob(db: Database, job: NewJob): void {
@@ -43,7 +33,20 @@ export function setJobStatus(
   ).run(status, opts.stage ?? null, opts.error ?? null, opts.now, id);
 }
 
-/** True if this user has a queued or running job. */
+/** Remove a job row — called when the job finishes, success or fail. */
+export function deleteJob(db: Database, id: string): void {
+  db.query(`DELETE FROM jobs WHERE id = ?`).run(id);
+}
+
+/**
+ * Wipe all job rows. Called once at boot: the in-process queue doesn't survive
+ * restart, so any leftover rows are stale locks from a crash — clear them.
+ */
+export function clearAllJobs(db: Database): void {
+  db.query(`DELETE FROM jobs`).run();
+}
+
+/** True if this user has a queued or running job (the per-user lock). */
 export function hasActiveJob(db: Database, telegramId: number): boolean {
   const row = db
     .query(
@@ -65,60 +68,4 @@ export function markUpdateProcessed(
     )
     .run(updateId, now);
   return res.changes > 0;
-}
-
-export function getCachedVideo(
-  db: Database,
-  youtubeId: string,
-  voice: string,
-): CachedVideo | null {
-  const row = db
-    .query(`SELECT * FROM videos WHERE youtube_id = ? AND voice = ?`)
-    .get(youtubeId, voice) as any;
-  if (!row) return null;
-  return {
-    youtubeId: row.youtube_id,
-    voice: row.voice,
-    videoFileId: row.video_file_id,
-    srtFileId: row.srt_file_id,
-    audioFileId: row.audio_file_id,
-    title: row.title,
-    duration: row.duration,
-    createdAt: row.created_at,
-  };
-}
-
-export type CacheUpsert = {
-  youtubeId: string;
-  voice: string;
-  videoFileId: string;
-  srtFileId: string;
-  audioFileId: string;
-  title: string | null;
-  duration: number | null;
-  now: number;
-};
-
-export function upsertCachedVideo(db: Database, v: CacheUpsert): void {
-  db.query(
-    `INSERT INTO videos
-       (youtube_id, voice, video_file_id, srt_file_id, audio_file_id, title, duration, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT (youtube_id, voice) DO UPDATE SET
-       video_file_id = excluded.video_file_id,
-       srt_file_id   = excluded.srt_file_id,
-       audio_file_id = excluded.audio_file_id,
-       title         = excluded.title,
-       duration      = excluded.duration,
-       created_at    = excluded.created_at`,
-  ).run(
-    v.youtubeId,
-    v.voice,
-    v.videoFileId,
-    v.srtFileId,
-    v.audioFileId,
-    v.title,
-    v.duration,
-    v.now,
-  );
 }

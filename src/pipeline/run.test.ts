@@ -9,7 +9,7 @@ process.env.GEMINI_API_KEY = "g";
 process.env.AZURE_SPEECH_KEY = "a";
 
 import { openDb } from "../lib/db";
-import { insertJob, getCachedVideo, hasActiveJob } from "../services/store";
+import { insertJob, hasActiveJob } from "../services/store";
 import { createJobDir, cleanupJobDir } from "./job";
 import { runJob, type RunDeps } from "./run";
 
@@ -43,9 +43,10 @@ test("happy path: sends 3 files, caches result, clears job, cleans dir", async (
   await runJob(db, { id: "run1", telegramId: 5, chatId: 5, url: "u", youtubeId: "ytid", dir }, makeDeps(sent));
 
   expect(sent).toEqual(["video", "doc", "audio"]);
-  const cached = getCachedVideo(db, "ytid", "my-MM-ThihaNeural");
-  expect(cached?.videoFileId).toBe("VF");
+  // Ephemeral: job row deleted (lock released), temp dir gone, nothing cached.
   expect(hasActiveJob(db, 5)).toBe(false);
+  const jobRows = db.query("SELECT COUNT(*) AS n FROM jobs").get() as any;
+  expect(jobRows.n).toBe(0);
   expect(existsSync(dir)).toBe(false);
   db.close();
 });
@@ -61,8 +62,9 @@ test("failure path: marks failed, notifies, still cleans the dir", async () => {
 
   await runJob(db, { id: "run2", telegramId: 6, chatId: 6, url: "u", youtubeId: "yt2", dir }, deps);
 
-  expect(hasActiveJob(db, 6)).toBe(false); // status failed, not active
-  expect(getCachedVideo(db, "yt2", "my-MM-ThihaNeural")).toBeNull();
+  expect(hasActiveJob(db, 6)).toBe(false); // row deleted on failure
+  const jobRows = db.query("SELECT COUNT(*) AS n FROM jobs").get() as any;
+  expect(jobRows.n).toBe(0);
   expect(existsSync(dir)).toBe(false);
   db.close();
 });

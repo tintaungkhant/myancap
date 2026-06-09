@@ -14,7 +14,7 @@ import {
   sendMessage,
 } from "../services/telegram";
 import { slugify } from "../lib/slug";
-import { setJobStatus, upsertCachedVideo } from "../services/store";
+import { setJobStatus, deleteJob } from "../services/store";
 import { cleanupJobDir, type Job } from "./job";
 
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
@@ -89,32 +89,22 @@ export async function runJob(
     if (videoBytes.byteLength > VIDEO_MAX_BYTES) {
       throw new Error("Video too large (>50 MB)");
     }
-    const videoFileId = await deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`);
-    const srtFileId = await deps.sendDocument(
+    await deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`);
+    await deps.sendDocument(
       job.chatId,
       new TextEncoder().encode(mySrt),
       `${base}.srt`,
       "application/x-subrip",
     );
     const aacBytes = new Uint8Array(await Bun.file(aacPath).arrayBuffer());
-    const audioFileId = await deps.sendAudio(job.chatId, aacBytes, `${base}.m4a`);
-
-    upsertCachedVideo(db, {
-      youtubeId: job.youtubeId,
-      voice: cfg.ttsVoice,
-      videoFileId,
-      srtFileId,
-      audioFileId,
-      title: meta.title,
-      duration: Math.round(meta.durationSeconds),
-      now: Date.now(),
-    });
-    setJobStatus(db, job.id, "done", { now: Date.now() });
+    await deps.sendAudio(job.chatId, aacBytes, `${base}.m4a`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    setJobStatus(db, job.id, "failed", { error: msg, now: Date.now() });
     await deps.sendMessage(job.chatId, `❌ ${msg}`).catch(() => {});
   } finally {
+    // Ephemeral: wipe all state for this job — the row (releases the per-user
+    // lock) and the temp dir — whether it succeeded or failed.
+    deleteJob(db, job.id);
     await cleanupJobDir(job.dir);
   }
 }

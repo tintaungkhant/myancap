@@ -1,0 +1,120 @@
+/** Runs the 6 pipeline stages for one job. No recovery: fail → notify → clean. */
+import { join } from "node:path";
+import type { Database } from "bun:sqlite";
+import { getConfig } from "../config";
+import * as youtube from "../services/youtube";
+import { transcribe } from "../services/transcribe";
+import { translateSrt } from "../services/translate";
+import { srtToSpeech } from "../services/srt-tts";
+import { wavToAac } from "../services/audio";
+import {
+  sendVideo,
+  sendAudio,
+  sendDocument,
+  sendMessage,
+} from "../services/telegram";
+import { slugify } from "../lib/slug";
+import { setJobStatus, upsertCachedVideo } from "../services/store";
+import { cleanupJobDir, type Job } from "./job";
+
+const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Injectable service surface — defaults wire the real services. Tests pass
+ * stubs (avoids Bun's process-global `mock.module` leakage between files).
+ */
+export type RunDeps = {
+  probe: typeof youtube.probe;
+  download: typeof youtube.download;
+  transcribe: typeof transcribe;
+  translateSrt: typeof translateSrt;
+  srtToSpeech: typeof srtToSpeech;
+  wavToAac: typeof wavToAac;
+  sendVideo: typeof sendVideo;
+  sendDocument: typeof sendDocument;
+  sendAudio: typeof sendAudio;
+  sendMessage: typeof sendMessage;
+};
+
+const defaultDeps: RunDeps = {
+  probe: youtube.probe,
+  download: youtube.download,
+  transcribe,
+  translateSrt,
+  srtToSpeech,
+  wavToAac,
+  sendVideo,
+  sendDocument,
+  sendAudio,
+  sendMessage,
+};
+
+export async function runJob(
+  db: Database,
+  job: Job,
+  deps: RunDeps = defaultDeps,
+): Promise<void> {
+  const cfg = getConfig();
+  const stage = (s: string, msg: string) => {
+    setJobStatus(db, job.id, "running", { stage: s, now: Date.now() });
+    void deps.sendMessage(job.chatId, msg).catch(() => {});
+  };
+
+  try {
+    stage("download", "⬇️ Downloading…");
+    const meta = await deps.probe(job.url);
+    if (meta.durationSeconds > cfg.maxVideoSeconds) {
+      const max = Math.round(cfg.maxVideoSeconds / 60);
+      throw new Error(`Video too long (max ${max} min)`);
+    }
+    const { videoPath, audioPath } = await deps.download(job.url, job.dir);
+
+    stage("transcribe", "📝 Transcribing…");
+    const enSrt = await deps.transcribe(audioPath);
+
+    stage("translate", "🌐 Translating…");
+    const mySrt = await deps.translateSrt(enSrt);
+
+    stage("tts", "🎙️ Dubbing…");
+    const wav = await deps.srtToSpeech(mySrt, { voice: cfg.ttsVoice });
+    const wavPath = join(job.dir, "dub.wav");
+    const aacPath = join(job.dir, "dub.m4a");
+    await Bun.write(wavPath, wav);
+    await deps.wavToAac(wavPath, aacPath);
+
+    stage("send", "📤 Sending…");
+    const base = slugify(meta.title, job.youtubeId);
+
+    const videoBytes = new Uint8Array(await Bun.file(videoPath).arrayBuffer());
+    if (videoBytes.byteLength > VIDEO_MAX_BYTES) {
+      throw new Error("Video too large (>50 MB)");
+    }
+    const videoFileId = await deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`);
+    const srtFileId = await deps.sendDocument(
+      job.chatId,
+      new TextEncoder().encode(mySrt),
+      `${base}.srt`,
+      "application/x-subrip",
+    );
+    const aacBytes = new Uint8Array(await Bun.file(aacPath).arrayBuffer());
+    const audioFileId = await deps.sendAudio(job.chatId, aacBytes, `${base}.m4a`);
+
+    upsertCachedVideo(db, {
+      youtubeId: job.youtubeId,
+      voice: cfg.ttsVoice,
+      videoFileId,
+      srtFileId,
+      audioFileId,
+      title: meta.title,
+      duration: Math.round(meta.durationSeconds),
+      now: Date.now(),
+    });
+    setJobStatus(db, job.id, "done", { now: Date.now() });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    setJobStatus(db, job.id, "failed", { error: msg, now: Date.now() });
+    await deps.sendMessage(job.chatId, `❌ ${msg}`).catch(() => {});
+  } finally {
+    await cleanupJobDir(job.dir);
+  }
+}

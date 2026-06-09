@@ -64,7 +64,7 @@ One module, read once at boot, **fail-fast**. It exports a single frozen typed
   (WAL mode). No migration framework — for this scale, idempotent DDL is enough.
 - All queries live in `services/store.ts` as named functions; no raw SQL in
   handlers/pipeline/services.
-- The DB is a **cache + record**, never the control plane. Don't drive pipeline
+- The DB holds **ephemeral job state only** (no cache), never the control plane. Don't drive pipeline
   flow off DB polling; the in-memory job does the work and writes status as it goes.
 - Timestamps are stored as unix-ms integers.
 - The DB file lives at `DATABASE_PATH` on a mounted volume — never under

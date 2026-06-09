@@ -58,6 +58,5 @@ Two separate caps both hit on long videos:
 - Optional muxed output (`-c:v copy`) as a 4th file, if a user wants one stitched
   video instead of assembling the parts themselves.
 - `/status` command to report a user's current job stage.
-- `/forget <url>` to invalidate a cached video.
 - yt-dlp auto-update step (extractors rot against YouTube changes).
 - Cookies file support for age-gated / members-only videos.

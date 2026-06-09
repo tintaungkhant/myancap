@@ -47,19 +47,17 @@ CMD ["bun", "run", "src/index.ts"]
 
 ## Data volume
 
-The SQLite file (`DATABASE_PATH`, default `/data/myancap.db`) holds the result
-cache, job history, and webhook dedup state. **It must persist across restarts** —
-mount a named volume:
+The SQLite file (`DATABASE_PATH`, default `/data/myancap.db`) holds only the
+webhook dedup set and in-flight job locks — **no result cache**, so persistence
+is **optional**. Job rows are wiped at boot anyway. Mounting a volume is still
+fine (and keeps `processed_updates` across restarts):
 
 ```bash
 docker run --env-file .env -p 3000:3000 -v myancap-data:/data myancap
 ```
 
-Without the volume, every restart starts with an empty cache: previously
-processed videos get re-downloaded, re-transcribed (OpenAI), and re-synthesized
-(Azure) — wasting money — instead of being re-sent instantly from cached
-`file_id`s. `WORK_DIR` (`/tmp/myancap`) is the opposite: purely scratch, cleaned
-per job, and does **not** need a volume.
+`WORK_DIR` (`/tmp/myancap`) is purely scratch, cleaned per job, and never needs a
+volume.
 
 ## .dockerignore
 

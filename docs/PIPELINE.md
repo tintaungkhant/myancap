@@ -9,17 +9,17 @@ stage and writes into the job's temp directory. **There is no muxing stage.**
 ```ts
 type Job = {
   id: string;          // short random id, used in temp paths + logs
-  telegramId: number;  // user — for the per-user active-job check + cache log
+  telegramId: number;  // user — for the per-user active-job check
   chatId: number;      // Telegram chat to reply to
   url: string;         // validated YouTube URL
-  youtubeId: string;   // extracted id — cache key
+  youtubeId: string;   // extracted id
   dir: string;         // WORK_DIR/<id> — deleted in finally
 };
 ```
 
-The matching `jobs` row carries `status` (`queued|running|done|failed`),
-`stage`, and `error`; the in-memory `Job` only threads file paths. Result
-`file_id`s are stored in the `videos` cache, not on the job.
+The matching `jobs` row carries `status` (`queued|running`), `stage`, and
+`error`, and exists **only while processing** — it is deleted when the job
+finishes. The in-memory `Job` threads file paths. There is no result cache.
 
 ---
 
@@ -38,12 +38,12 @@ Gates run in this order; the first that fires short-circuits:
    non-YouTube host (also the SSRF guard) — gets a single plain **reject message**
    (e.g. `Send me a YouTube link.`) and stops. No commands, no `/start`, no help
    menu in v1 — Telegram UX is deliberately minimal.
-4. **Cache hit?** If `videos` already has this `youtube_id (+ voice)`, re-send the
-   three stored `file_id`s immediately (`✅ Sent (cached)`). No job created.
-5. **User busy?** If this `telegram_id` has a `queued`/`running` job, reject:
+4. **User busy?** If this `telegram_id` has a `queued`/`running` job, reject:
    `⏳ You already have a video in progress — wait for it to finish.` No job.
-6. Otherwise: insert a `jobs` row (`status='queued'`), reply `🎬 Working on it…`,
+5. Otherwise: insert a `jobs` row (`status='queued'`), reply `🎬 Working on it…`,
    enqueue, return `200` immediately.
+
+There is **no cache gate** — every accepted link is reprocessed from scratch.
 
 Progress is reported as **one message per stage** as the job advances
 (`⬇️ Downloading…`, `📝 Transcribing…`, `🌐 Translating…`, `🎙️ Dubbing…`,
@@ -73,8 +73,7 @@ yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 5 \
   (`yt-dlp --print "%(duration)s\n%(title)s" --no-download <url>`). If duration
   exceeds `MAX_VIDEO_SECONDS` (default **900s = 15 min**), reject immediately with
   a message — don't pull a long file just to discard it. Keep the **title**: it
-  becomes the delivered filenames (see *Filenames* below) and is cached in
-  `videos.title`.
+  becomes the delivered filenames (see *Filenames* below).
 - **Why mp3, not WAV:** the OpenAI audio API caps uploads at **25 MB**. Mono mp3
   is ~0.5 MB/min, so a 15-min clip is ~7–8 MB — comfortably under the cap.
   (16 kHz WAV would be ~1.9 MB/min.) whisper-1 accepts mp3 directly.
@@ -207,11 +206,9 @@ All three are delivered under a **shared base name derived from the video title*
   a document, or if still too large, fail with `❌ Video too large (>50 MB)`. The
   SRT and AAC are tiny and never hit the cap. Splitting/compression is out of
   scope for now.
-- On success: capture the three `file_id`s Telegram returns and **upsert them into
-  the `videos` cache** (`youtube_id (+ voice) → video_file_id, srt_file_id,
-  audio_file_id`) so repeats are instant.
-- Mark the `jobs` row `done` (or `failed`), then **always remove the temp dir**
-  in a `finally` — success or failure. Mandatory.
+- The `file_id`s Telegram returns are **not stored** — there is no cache.
+- In a `finally` (success or failure), **wipe all state for the job**: delete the
+  `jobs` row (releasing the per-user lock) and remove the temp dir. Mandatory.
 
 ### Filenames
 

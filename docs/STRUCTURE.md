@@ -34,7 +34,7 @@ myancap-server/
     │   ├── srt-tts.ts        SRT → timed WAV, duration-matched     (exists)
     │   ├── audio.ts          ffmpeg WAV → AAC                      (was MP3)
     │   ├── telegram.ts       Telegram Bot API client              (exists)
-    │   └── store.ts          DB queries: jobs, video cache, dedup
+    │   └── store.ts          DB queries: job lifecycle + webhook dedup
     ├── handlers/
     │   └── telegram-webhook.ts   parse update → gates → enqueue job
     └── lib/

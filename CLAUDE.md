@@ -68,7 +68,7 @@ src/
     srt-tts.ts             SRT → timed WAV, duration-matched (exists)
     audio.ts               ffmpeg WAV → AAC (was MP3)
     telegram.ts            Telegram Bot API client (exists)
-    store.ts               DB queries: jobs, video cache, processed updates
+    store.ts               DB queries: job lifecycle + webhook dedup
   handlers/
     telegram-webhook.ts    parse update, route YT link → pipeline
   lib/
@@ -79,12 +79,13 @@ docs/                      architecture, pipeline, setup, docker, conventions, t
 Dockerfile                 single-stage Bun runtime (ffmpeg + yt-dlp)
 ```
 
-SQLite is used **only as a record + result cache**, not for recovery: a `jobs`
-row tracks status/stage/error for status replies and debugging, a `videos` row
-caches `youtube_id → Telegram file_id` for instant re-sends, and
-`processed_updates` deduplicates Telegram webhook retries. **No durable queue, no
-crash recovery** — in-flight jobs are lost on restart by design. The DB file
-lives on a mounted volume (`DATABASE_PATH`).
+SQLite holds **only ephemeral processing state** — there is **no result cache**.
+A `jobs` row exists *only while a job is processing* (it is the per-user lock) and
+is deleted the moment the job finishes, success or fail. `processed_updates`
+deduplicates Telegram webhook retries. Every request reprocesses from scratch.
+**No durable queue, no crash recovery** — in-flight jobs are lost on restart by
+design, and all leftover job rows are cleared at boot. The DB file lives on a
+mounted volume (`DATABASE_PATH`), though it now carries no cache worth persisting.
 
 Full rationale: [docs/STRUCTURE.md](docs/STRUCTURE.md).
 
@@ -108,7 +109,7 @@ What is **missing** and must be built (the **upstream half** + delivery):
 6. `services/audio.ts` — change WAV→MP3 to WAV→AAC
 7. `sendVideo()` + `sendDocument` use for the 3-file delivery
 8. `pipeline/` orchestration + job temp-dir lifecycle
-9. `lib/db.ts` + `services/store.ts` — SQLite schema, jobs/cache/dedup queries
+9. `lib/db.ts` + `services/store.ts` — SQLite schema, job-lifecycle/dedup queries
 10. `Dockerfile` (single-stage) + a data volume for the SQLite file
 
 ## Conventions
@@ -127,8 +128,9 @@ What is **missing** and must be built (the **upstream half** + delivery):
   in-process queue (`MAX_CONCURRENT_JOBS`); progress is reported to the chat as
   **one message per stage**. On failure: clean up + notify the user, then stop.
   No retry, no recovery.
-- **SQLite is a cache/record, not a source of truth for control flow.** The
-  pipeline runs in memory; the DB just records what happened and serves the cache.
+- **SQLite holds ephemeral state only, not control flow.** The pipeline runs in
+  memory; the DB just holds the per-user lock while processing and the webhook
+  dedup set. State is wiped when a job finishes. No result cache.
 - TypeScript strict mode. No `any` in new code unless unavoidable.
 
 More: [docs/CONVENTIONS.md](docs/CONVENTIONS.md).

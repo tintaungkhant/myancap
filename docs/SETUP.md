@@ -36,8 +36,8 @@ cp .env.example .env
 | `MAX_VIDEO_SECONDS`       | no       | `900`                   | Reject videos longer than this (15m) |
 | `PORT`                    | no       | `3000`                  | HTTP listen port                     |
 
-> `DATABASE_PATH` must live on a **mounted volume** in Docker, otherwise the
-> result cache (and job history) is wiped on every container restart. See
+> `DATABASE_PATH` holds only the webhook dedup set + in-flight job locks (no
+> result cache), so a mounted volume is **optional**. See
 > [DOCKER.md](DOCKER.md#data-volume).
 
 ## Run
@@ -46,7 +46,7 @@ cp .env.example .env
 # dev (watch mode)
 bun run dev
 
-# Docker (mount a volume for the SQLite cache)
+# Docker (volume optional — DB holds no cache, only dedup/locks)
 docker build -t myancap .
 docker run --env-file .env -p 3000:3000 -v myancap-data:/data myancap
 
@@ -57,8 +57,9 @@ docker compose down              # stop
 ```
 
 Compose reads `.env`, forces the container's internal `PORT`/`DATABASE_PATH`/
-`WORK_DIR`, and persists the cache in the `myancap-data` named volume. Override
-the published host port with `HOST_PORT=8080 docker compose up -d`.
+`WORK_DIR`, and keeps the SQLite file in the `myancap-data` named volume (which
+now holds only dedup/locks). Override the published host port with
+`HOST_PORT=8080 docker compose up -d`.
 
 ## Expose + register the Telegram webhook
 

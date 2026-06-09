@@ -47,8 +47,9 @@ the subtitle and voice-over are produced alongside it and sent as separate files
 3. **Deliver parts, not a master.** Shipping video + subs + voice-over separately
    avoids a lossy/fragile mux step and lets the user assemble in any player. It
    also means the original video stream is never re-encoded.
-4. **Cache aggressively.** ASR and TTS cost money; the `videos` table caches the
-   per-video result so repeats are free and instant.
+4. **Fully ephemeral.** State exists only while a job is processing; on finish
+   (success or fail) the job row and temp dir are wiped. No result cache — every
+   request reprocesses. Simpler and predictable; the user never gets a stale file.
 5. **Fast ack, background work.** Telegram retries un-acked webhooks; the handler
    returns `200` immediately and processes the job asynchronously, reporting
    progress as one message per stage.
@@ -81,46 +82,34 @@ Each is a stateless module wrapping one external dependency. See
 [PIPELINE.md](PIPELINE.md) for per-stage contracts.
 
 ### Storage — SQLite (`lib/db.ts` + `services/store.ts`)
-A single SQLite file (`bun:sqlite`, WAL mode) holds three small tables:
+A single SQLite file (`bun:sqlite`, WAL mode) holds two small tables — **no result
+cache**:
 
-- **`jobs`** — one row per request: status, current stage, error. Used for
-  status replies and debugging. *Not* used to drive or recover work.
-- **`videos`** — result cache: `youtube_id (+ voice)` → the **three** Telegram
-  `file_id`s (video, subtitle, voice-over). On a repeat request the bot re-sends
-  the cached files instantly — no download, no transcription, no TTS, no cost.
+- **`jobs`** — exists **only while a job is processing**. It is the per-user
+  lock: inserted when work starts, `stage` updated as it advances, and **deleted
+  on finish (success or fail)**. All rows are also cleared at boot (the in-process
+  queue doesn't survive restart, so any leftover row is a stale lock).
 - **`processed_updates`** — `update_id` dedup so Telegram webhook retries don't
   spawn duplicate jobs.
 
-The DB is a **cache and audit record**, never the control plane. The pipeline
-runs in memory; if the process dies, in-flight jobs are simply lost (see *Failure
-model*). The file lives on a mounted volume (`DATABASE_PATH`) so it survives
-container restarts — otherwise the cache would reset every deploy.
+The DB never holds results and is never the control plane — the pipeline runs in
+memory. If the process dies, in-flight jobs are lost (see *Failure model*). The
+file still lives on a mounted volume (`DATABASE_PATH`), but it now carries nothing
+worth persisting; wiping the volume is harmless.
 
 Schema (created on boot by `lib/db.ts`, `IF NOT EXISTS`):
 
 ```sql
 CREATE TABLE jobs (
   id          TEXT PRIMARY KEY,                -- short random id
-  telegram_id INTEGER NOT NULL,               -- requesting user
+  telegram_id INTEGER NOT NULL,               -- requesting user (per-user lock)
   url         TEXT NOT NULL,
   youtube_id  TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'queued',  -- queued|running|done|failed
+  status      TEXT NOT NULL DEFAULT 'queued',  -- queued|running (deleted on finish)
   stage       TEXT,                            -- download|transcribe|translate|tts|send
   error       TEXT,
   created_at  INTEGER NOT NULL,                -- unix ms
   updated_at  INTEGER NOT NULL
-);
-
-CREATE TABLE videos (                          -- result cache (3 files per video)
-  youtube_id     TEXT NOT NULL,
-  voice          TEXT NOT NULL,                -- cache key includes voice
-  video_file_id  TEXT NOT NULL,               -- original video
-  srt_file_id    TEXT NOT NULL,               -- Myanmar subtitles
-  audio_file_id  TEXT NOT NULL,               -- Myanmar voice-over (aac)
-  title          TEXT,
-  duration       INTEGER,
-  created_at     INTEGER NOT NULL,
-  PRIMARY KEY (youtube_id, voice)
 );
 
 CREATE TABLE processed_updates (               -- webhook idempotency
@@ -141,10 +130,11 @@ CREATE TABLE processed_updates (               -- webhook idempotency
   Any rows left `running` are stale and ignored — only a fresh request matters.
 - **Telegram redelivers a webhook** → deduplicated via the `processed_updates`
   table (`update_id` primary key); the duplicate is dropped.
-- **Same video requested again** → all three files served from the `videos`
-  cache (cached `file_id`s), skipping the whole pipeline.
+- **Same video requested again** → fully reprocessed (no cache). The user always
+  gets a freshly generated result, never a stale file.
 - **User already has a job in flight** → new request rejected with a message; no
-  second job is created.
+  second job is created. Once the job finishes (and its row is deleted) the user
+  can immediately request again.
 - **ffmpeg / yt-dlp missing** → startup or first-use error with the captured
   stderr. The Docker image guarantees their presence.
 - **A cloud API errors** (OpenAI/Gemini/Azure) → that stage throws with the

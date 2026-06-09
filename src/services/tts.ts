@@ -21,7 +21,7 @@ export type TtsOptions = {
   rate?: number;
 };
 
-const DEFAULT_VOICE = "my-MM-NilarNeural";
+export const DEFAULT_VOICE = "my-MM-ThihaNeural";
 const DEFAULT_FORMAT = "audio-16khz-128kbitrate-mono-mp3";
 
 function escapeXml(text: string): string {
@@ -31,6 +31,17 @@ function escapeXml(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/** Build the SSML document for a voice + optional speaking rate. */
+export function buildSsml(text: string, voice: string, rate?: number): string {
+  const locale = voice.split("-").slice(0, 2).join("-");
+  const inner = escapeXml(text);
+  const body =
+    rate && rate !== 1
+      ? `<prosody rate="${rate.toFixed(2)}">${inner}</prosody>`
+      : inner;
+  return `<speak version="1.0" xml:lang="${locale}"><voice xml:lang="${locale}" name="${voice}">${body}</voice></speak>`;
 }
 
 /**
@@ -51,15 +62,8 @@ export async function synthesizeSpeech(
 
   const voice = options.voice ?? DEFAULT_VOICE;
   const format = options.format ?? DEFAULT_FORMAT;
-  const locale = voice.split("-").slice(0, 2).join("-");
 
-  const inner = escapeXml(text);
-  const body =
-    options.rate && options.rate !== 1
-      ? `<prosody rate="${options.rate.toFixed(2)}">${inner}</prosody>`
-      : inner;
-
-  const ssml = `<speak version="1.0" xml:lang="${locale}"><voice xml:lang="${locale}" name="${voice}">${body}</voice></speak>`;
+  const ssml = buildSsml(text, voice, options.rate);
 
   const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
 

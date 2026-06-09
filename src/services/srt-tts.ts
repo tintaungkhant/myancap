@@ -8,6 +8,10 @@
  */
 
 import { synthesizeSpeech } from "./tts";
+import { parseSrt, type Cue } from "../lib/srt";
+
+// Re-export so existing importers of parseSrt from this module keep working.
+export { parseSrt, type Cue };
 
 // Azure raw PCM output: 16 kHz, 16-bit, mono.
 const SAMPLE_RATE = 16000;
@@ -16,49 +20,9 @@ const BYTES_PER_SEC = SAMPLE_RATE * BYTES_PER_SAMPLE;
 const PCM_FORMAT = "raw-16khz-16bit-mono-pcm";
 const MAX_RATE = 2.5; // never compress beyond this
 
-export type Cue = {
-  index: number;
-  start: number; // seconds
-  end: number; // seconds
-  text: string;
-};
-
 export type SrtTtsOptions = {
   voice?: string;
 };
-
-/** Parse an SRT timestamp "HH:MM:SS,mmm" into seconds. */
-function parseTimestamp(ts: string): number {
-  const [hms, ms] = ts.trim().split(",");
-  const [h, m, s] = hms.split(":").map(Number);
-  return h * 3600 + m * 60 + s + Number(ms) / 1000;
-}
-
-/** Parse SRT text into cues. */
-export function parseSrt(srt: string): Cue[] {
-  const blocks = srt.replace(/\r/g, "").trim().split(/\n\s*\n/);
-  const cues: Cue[] = [];
-
-  for (const block of blocks) {
-    const lines = block.split("\n");
-    if (lines.length < 2) continue;
-
-    const index = Number(lines[0].trim());
-    const timeMatch = lines[1].match(
-      /(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/
-    );
-    if (!timeMatch) continue;
-
-    const start = parseTimestamp(timeMatch[1]);
-    const end = parseTimestamp(timeMatch[2]);
-    const text = lines.slice(2).join(" ").trim();
-    if (!text) continue;
-
-    cues.push({ index, start, end, text });
-  }
-
-  return cues;
-}
 
 /** Duration of a raw-PCM buffer in seconds. */
 function pcmDuration(bytes: number): number {

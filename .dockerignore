@@ -1,0 +1,12 @@
+node_modules
+.git
+.env
+*.log
+*.db
+*.db-wal
+*.db-shm
+docs
+**/*.mp4
+**/*.wav
+**/*.mp3
+**/*.m4a

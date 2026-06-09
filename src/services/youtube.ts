@@ -1,6 +1,18 @@
 /** yt-dlp wrapper: probe metadata, download the video, extract compressed mp3. */
+import { getConfig } from "../config";
 
 export type VideoMeta = { durationSeconds: number; title: string };
+
+/**
+ * Extra flags applied to every yt-dlp call. Cookies and an explicit player
+ * client help get past YouTube's "confirm you're not a bot" / SABR gating.
+ */
+export function extraArgs(cookies?: string, playerClient?: string): string[] {
+  const args: string[] = [];
+  if (cookies) args.push("--cookies", cookies);
+  if (playerClient) args.push("--extractor-args", `youtube:player_client=${playerClient}`);
+  return args;
+}
 
 const YT_ID = /(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([\w-]{11})/;
 
@@ -43,7 +55,9 @@ export function audioArgs(url: string, dir: string): string[] {
 }
 
 async function run(args: string[]): Promise<string> {
-  const proc = Bun.spawn(["yt-dlp", ...args], { stdout: "pipe", stderr: "pipe" });
+  const cfg = getConfig();
+  const common = extraArgs(cfg.ytdlpCookies, cfg.ytdlpPlayerClient);
+  const proc = Bun.spawn(["yt-dlp", ...common, ...args], { stdout: "pipe", stderr: "pipe" });
   const [out, err, code] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

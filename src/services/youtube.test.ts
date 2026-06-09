@@ -1,11 +1,21 @@
 import { expect, test } from "bun:test";
 import {
   extractYouTubeId,
+  extraArgs,
   probeArgs,
   parseProbe,
   videoArgs,
   audioArgs,
 } from "./youtube";
+
+test("extraArgs adds cookies + player client only when set", () => {
+  expect(extraArgs(undefined, undefined)).toEqual([]);
+  expect(extraArgs("/c.txt", undefined)).toEqual(["--cookies", "/c.txt"]);
+  expect(extraArgs(undefined, "tv")).toEqual([
+    "--extractor-args",
+    "youtube:player_client=tv",
+  ]);
+});
 
 test("extractYouTubeId matches the three accepted forms, rejects others", () => {
   expect(extractYouTubeId("watch https://youtube.com/watch?v=dQw4w9WgXcQ now")).toBe("dQw4w9WgXcQ");

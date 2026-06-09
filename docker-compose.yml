@@ -12,6 +12,9 @@ services:
       - "${HOST_PORT:-3000}:3000"
     volumes:
       - myancap-data:/data
+      # To beat YouTube's bot check, drop a cookies.txt next to this file and
+      # set YTDLP_COOKIES=/cookies.txt in .env, then uncomment:
+      # - ./cookies.txt:/cookies.txt:ro
     restart: unless-stopped
 
 volumes:

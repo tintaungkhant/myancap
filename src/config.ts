@@ -11,6 +11,8 @@ export type Config = {
   azureSpeechKey: string;
   azureSpeechRegion: string;
   ttsVoice: string;
+  ytdlpCookies?: string;
+  ytdlpPlayerClient?: string;
   databasePath: string;
   workDir: string;
   maxConcurrentJobs: number;
@@ -52,6 +54,8 @@ export function loadConfig(env: Env = process.env): Config {
     azureSpeechKey: req(env, "AZURE_SPEECH_KEY", missing),
     azureSpeechRegion: env.AZURE_SPEECH_REGION || "southeastasia",
     ttsVoice: env.TTS_VOICE || "my-MM-ThihaNeural",
+    ytdlpCookies: env.YTDLP_COOKIES,
+    ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
     databasePath: env.DATABASE_PATH || "/data/myancap.db",
     workDir: env.WORK_DIR || "/tmp/myancap",
     maxConcurrentJobs: posInt(env, "MAX_CONCURRENT_JOBS", 1, errors),

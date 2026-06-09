@@ -85,11 +85,16 @@ export async function runJob(
     stage("send", "📤 file တွေပို့နေသည်");
     const base = slugify(meta.title, job.youtubeId);
 
+    // The video may exceed Telegram's 50 MB upload cap. If so, skip it but still
+    // deliver the subtitle + dub — a partial result beats nothing.
     const videoBytes = new Uint8Array(await Bun.file(videoPath).arrayBuffer());
     if (videoBytes.byteLength > VIDEO_MAX_BYTES) {
-      throw new Error("Video too large (>50 MB)");
+      await deps
+        .sendMessage(job.chatId, "⚠️ video ကြီးလွန်းလို့ မပို့နိုင်ပါ — စာတန်းနဲ့ မြန်မာသံ ဖိုင်တွေပဲ ပို့ပါမယ်")
+        .catch(() => {});
+    } else {
+      await deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`);
     }
-    await deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`);
     await deps.sendDocument(
       job.chatId,
       new TextEncoder().encode(mySrt),

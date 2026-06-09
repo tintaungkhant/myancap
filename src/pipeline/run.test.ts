@@ -51,6 +51,29 @@ test("happy path: sends 3 files, caches result, clears job, cleans dir", async (
   db.close();
 });
 
+test("oversized video: skips video, warns, still sends srt + audio", async () => {
+  const db = openDb(":memory:");
+  await mkdir("/tmp/myancap-runtest", { recursive: true });
+  const dir = await createJobDir("run3");
+  insertJob(db, { id: "run3", telegramId: 7, url: "u", youtubeId: "yt3", now: 1 });
+
+  const sent: string[] = [];
+  const msgs: string[] = [];
+  const deps = makeDeps(sent);
+  deps.download = async (_u: string, d: string) => {
+    await Bun.write(`${d}/video.mp4`, new Uint8Array(51 * 1024 * 1024)); // >50 MB
+    return { videoPath: `${d}/video.mp4`, audioPath: `${d}/audio.mp3` };
+  };
+  deps.sendMessage = async (_c: number, m: string) => { msgs.push(m); };
+
+  await runJob(db, { id: "run3", telegramId: 7, chatId: 7, url: "u", youtubeId: "yt3", dir }, deps);
+
+  expect(sent).toEqual(["doc", "audio"]); // video skipped
+  expect(msgs.some((m) => m.includes("ကြီးလွန်း"))).toBe(true);
+  expect(existsSync(dir)).toBe(false);
+  db.close();
+});
+
 test("failure path: marks failed, notifies, still cleans the dir", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });

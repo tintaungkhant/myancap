@@ -61,7 +61,7 @@ export async function runJob(
   };
 
   try {
-    stage("download", "⬇️ Downloading…");
+    stage("download", "⬇️ video download နေသည်");
     const meta = await deps.probe(job.url);
     if (meta.durationSeconds > cfg.maxVideoSeconds) {
       const max = Math.round(cfg.maxVideoSeconds / 60);
@@ -69,20 +69,20 @@ export async function runJob(
     }
     const { videoPath, audioPath } = await deps.download(job.url, job.dir);
 
-    stage("transcribe", "📝 Transcribing…");
+    stage("transcribe", "📝 စာတန်းထိုးထုတ်နေသည်");
     const enSrt = await deps.transcribe(audioPath);
 
-    stage("translate", "🌐 Translating…");
+    stage("translate", "🌐 ဘာသာပြန်နေသည်");
     const mySrt = await deps.translateSrt(enSrt);
 
-    stage("tts", "🎙️ Dubbing…");
+    stage("tts", "🎙️ မြန်မာသံထုတ်နေသည်");
     const wav = await deps.srtToSpeech(mySrt, { voice: cfg.ttsVoice, maxRate: cfg.maxTtsRate });
     const wavPath = join(job.dir, "dub.wav");
     const aacPath = join(job.dir, "dub.m4a");
     await Bun.write(wavPath, wav);
     await deps.wavToAac(wavPath, aacPath);
 
-    stage("send", "📤 Sending…");
+    stage("send", "📤 file တွေပို့နေသည်");
     const base = slugify(meta.title, job.youtubeId);
 
     const videoBytes = new Uint8Array(await Bun.file(videoPath).arrayBuffer());

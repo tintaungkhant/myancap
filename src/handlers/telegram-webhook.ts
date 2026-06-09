@@ -76,7 +76,7 @@ export async function handleUpdate(
   const url = `https://www.youtube.com/watch?v=${youtubeId}`;
   insertJob(db, { id, telegramId, url, youtubeId, now });
   const dir = await createJobDir(id);
-  await deps.sendMessage(chatId, "🎬 Working on it…").catch(() => {});
+  await deps.sendMessage(chatId, "🎬 လုပ်ဆောင်နေသည်").catch(() => {});
 
   const job: Job = { id, telegramId, chatId, url, youtubeId, dir };
   void sem.run(() => deps.runJob(db, job));

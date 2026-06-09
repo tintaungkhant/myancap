@@ -19,7 +19,7 @@ Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 Telegram (YT link)
   → yt-dlp        download video.mp4 + extract compressed audio.mp3
   → whisper-1     audio.mp3 → English .srt        (OpenAI API, timestamped)
-  → Gemini 1.5 Flash  EN .srt → Myanmar .srt       (translate + soft re-time)
+  → Gemini 2.5 Flash  EN .srt → Myanmar .srt       (translate + soft re-time)
   → Azure TTS     MY .srt → timed AAC voice-over    (prosody-rate duration match)
   → Telegram      send 3 files: video.mp4 + my.srt + dub.m4a
 ```
@@ -35,7 +35,7 @@ No muxing step. Full detail: [docs/PIPELINE.md](docs/PIPELINE.md).
 | Language       | TypeScript (strict)                       |
 | Download       | `yt-dlp` (CLI, shelled out)               |
 | Transcription  | OpenAI `whisper-1` (REST, returns SRT)    |
-| Translation    | Google Gemini `gemini-1.5-flash` (REST)   |
+| Translation    | Google Gemini `gemini-2.5-flash` (REST)   |
 | TTS            | Azure Neural TTS `my-MM-ThihaNeural` (REST)|
 | Media          | `ffmpeg` (CLI — extract + WAV→AAC)        |
 | Delivery       | Telegram Bot API (REST)                    |

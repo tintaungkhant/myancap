@@ -114,12 +114,12 @@ file=@audio.mp3
 
 ---
 
-## 4. Translation — Gemini 1.5 Flash
+## 4. Translation — Gemini 2.5 Flash
 
 **File:** `services/translate.ts`
 **In:** `en.srt` content  **Out:** `my.srt` content
 
-`POST https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=<GEMINI_API_KEY>`
+`POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=<GEMINI_API_KEY>`
 
 The model reads the whole English SRT and returns a Myanmar SRT. It is allowed to
 **re-time** as well as translate. No exact prompt is fixed here — this is the

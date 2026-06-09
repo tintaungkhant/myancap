@@ -2,7 +2,7 @@
 import { getConfig } from "../config";
 import { parseSrt, serializeSrt, type Cue } from "../lib/srt";
 
-const MODEL = "gemini-1.5-flash";
+const MODEL = "gemini-2.5-flash";
 
 export function buildPrompt(enSrt: string): string {
   return [

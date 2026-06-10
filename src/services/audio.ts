@@ -5,11 +5,12 @@ export function aacArgs(inputPath: string, outputPath: string): string[] {
     "-hide_banner", "-loglevel", "error", "-y",
     "-i", inputPath,
     "-c:a", "aac", "-b:a", "160k",
+    "-f", "adts", // raw AAC stream (.aac) — plays in CapCut; m4a container does not
     outputPath,
   ];
 }
 
-/** Convert a WAV file to an AAC (.m4a) file. */
+/** Convert a WAV file to a raw AAC (.aac, ADTS) file. */
 export async function wavToAac(inputPath: string, outputPath: string): Promise<void> {
   const proc = Bun.spawn(["ffmpeg", ...aacArgs(inputPath, outputPath)], {
     stdout: "pipe",

@@ -9,7 +9,6 @@ import { srtToSpeech } from "../services/srt-tts";
 import { wavToAac } from "../services/audio";
 import {
   sendVideo,
-  sendAudio,
   sendDocument,
   sendMessage,
 } from "../services/telegram";
@@ -32,7 +31,6 @@ export type RunDeps = {
   wavToAac: typeof wavToAac;
   sendVideo: typeof sendVideo;
   sendDocument: typeof sendDocument;
-  sendAudio: typeof sendAudio;
   sendMessage: typeof sendMessage;
 };
 
@@ -45,7 +43,6 @@ const defaultDeps: RunDeps = {
   wavToAac,
   sendVideo,
   sendDocument,
-  sendAudio,
   sendMessage,
 };
 
@@ -82,7 +79,7 @@ export async function runJob(
       concurrency: cfg.ttsConcurrency,
     });
     const wavPath = join(job.dir, "dub.wav");
-    const aacPath = join(job.dir, "dub.m4a");
+    const aacPath = join(job.dir, "dub.aac");
     await Bun.write(wavPath, wav);
     await deps.wavToAac(wavPath, aacPath);
 
@@ -106,7 +103,9 @@ export async function runJob(
       "application/x-subrip",
     );
     const aacBytes = new Uint8Array(await Bun.file(aacPath).arrayBuffer());
-    await deps.sendAudio(job.chatId, aacBytes, `${base}.m4a`);
+    // Sent as a document, not sendAudio: Telegram's audio endpoint only accepts
+    // mp3/m4a and would reject a raw .aac. A document arrives untouched.
+    await deps.sendDocument(job.chatId, aacBytes, `${base}.aac`, "audio/aac");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await deps.sendMessage(job.chatId, `❌ မအောင်မြင်ပါ — ${msg}`).catch(() => {});

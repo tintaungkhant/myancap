@@ -27,8 +27,10 @@ function makeDeps(sent: string[]): RunDeps {
     srtToSpeech: async () => new Uint8Array([1, 2, 3]),
     wavToAac: async (_i: string, o: string) => { await Bun.write(o, "AAC"); },
     sendVideo: async () => { sent.push("video"); return "VF"; },
-    sendDocument: async () => { sent.push("doc"); return "SF"; },
-    sendAudio: async () => { sent.push("audio"); return "AF"; },
+    sendDocument: async (_c: number, _b: Uint8Array, fn: string) => {
+      sent.push(fn.endsWith(".aac") ? "aac" : "srt");
+      return "DF";
+    },
     sendMessage: async () => {},
   };
 }
@@ -42,7 +44,7 @@ test("happy path: sends 3 files, caches result, clears job, cleans dir", async (
   const sent: string[] = [];
   await runJob(db, { id: "run1", telegramId: 5, chatId: 5, url: "u", youtubeId: "ytid", dir }, makeDeps(sent));
 
-  expect(sent).toEqual(["video", "doc", "audio"]);
+  expect(sent).toEqual(["video", "srt", "aac"]);
   // Ephemeral: job row deleted (lock released), temp dir gone, nothing cached.
   expect(hasActiveJob(db, 5)).toBe(false);
   const jobRows = db.query("SELECT COUNT(*) AS n FROM jobs").get() as any;
@@ -68,7 +70,7 @@ test("oversized video: skips video, warns, still sends srt + audio", async () =>
 
   await runJob(db, { id: "run3", telegramId: 7, chatId: 7, url: "u", youtubeId: "yt3", dir }, deps);
 
-  expect(sent).toEqual(["doc", "audio"]); // video skipped
+  expect(sent).toEqual(["srt", "aac"]); // video skipped
   expect(msgs.some((m) => m.includes("ကြီးလွန်း"))).toBe(true);
   expect(existsSync(dir)).toBe(false);
   db.close();

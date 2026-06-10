@@ -1,8 +1,9 @@
 # Pipeline stages
 
-One job = one YouTube link → three delivered files (original video, Myanmar
-subtitles, Myanmar voice-over). Each stage takes files/strings from the previous
-stage and writes into the job's temp directory. **There is no muxing stage.**
+One job = one YouTube link → four delivered files (original video, English
+subtitles, Myanmar subtitles, Myanmar voice-over mp3). Each stage takes
+files/strings from the previous stage and writes into the job's temp directory.
+**There is no muxing stage.**
 
 `Job` context (see `pipeline/job.ts`):
 
@@ -36,18 +37,19 @@ Gates run in this order; the first that fires short-circuits:
 3. **Parse** the first YouTube URL from `message.text`. Accept `youtube.com/watch`,
    `youtu.be/<id>`, `youtube.com/shorts/<id>`. Anything else — non-URL, or a
    non-YouTube host (also the SSRF guard) — gets a single plain **reject message**
-   (e.g. `Send me a YouTube link.`) and stops. No commands, no `/start`, no help
-   menu in v1 — Telegram UX is deliberately minimal.
+   (`❌ YouTube link ပို့ပါ`) and stops. No commands, no `/start`, no help menu —
+   Telegram UX is deliberately minimal.
 4. **User busy?** If this `telegram_id` has a `queued`/`running` job, reject:
-   `⏳ You already have a video in progress — wait for it to finish.` No job.
-5. Otherwise: insert a `jobs` row (`status='queued'`), reply `🎬 Working on it…`,
+   `⏳ ယခင် video ပြီးအောင် စောင့်ပါ`. No job.
+5. Otherwise: insert a `jobs` row (`status='queued'`), reply `🎬 လုပ်ဆောင်နေသည်`,
    enqueue, return `200` immediately.
 
 There is **no cache gate** — every accepted link is reprocessed from scratch.
 
-Progress is reported as **one message per stage** as the job advances
-(`⬇️ Downloading…`, `📝 Transcribing…`, `🌐 Translating…`, `🎙️ Dubbing…`,
-`📤 Sending…`).
+All user-facing replies are in **Burmese**. Progress is reported as **one message
+per stage** as the job advances (`⬇️ video download နေသည်`, `📝 စာတန်းထိုးထုတ်နေသည်`,
+`🌐 ဘာသာပြန်နေသည်`, `🎙️ မြန်မာသံထုတ်နေသည်`, `📤 file တွေပို့နေသည်`). Failures:
+`❌ မအောင်မြင်ပါ — <reason>`.
 
 ---
 
@@ -59,8 +61,10 @@ Progress is reported as **one message per stage** as the job advances
 Two outputs from the one source:
 
 ```bash
-# video — best mp4, delivered to the user untouched (never re-encoded)
-yt-dlp -f 'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b' \
+# video — prefer H.264 (avc1) + AAC, capped at <=MAX_VIDEO_HEIGHT (default 480p),
+# never fall back to audio-only. avc1 because Telegram renders VP9/AV1 as a black
+# screen; the height cap keeps files small (vs the 50 MB upload limit).
+yt-dlp -f 'bv*[vcodec^=avc1][height<=480]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1][height<=480]/bv*[ext=mp4][height<=480]+ba/b[height<=480][vcodec!=none]/b[vcodec!=none]' \
        --merge-output-format mp4 -o "<dir>/video.%(ext)s" <url>
 
 # audio for transcription — compressed mono mp3, kept small for the API upload
@@ -68,6 +72,10 @@ yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 5 \
        --postprocessor-args "-ac 1" \
        -o "<dir>/audio.%(ext)s" <url>
 ```
+
+Every yt-dlp call also gets `--cookies <YTDLP_COOKIES>` and/or
+`--extractor-args youtube:player_client=<YTDLP_PLAYER_CLIENT>` when those env vars
+are set — to get past YouTube's "confirm you're not a bot" / SABR gating.
 
 - **Metadata pre-check first.** Before downloading anything, probe metadata
   (`yt-dlp --print "%(duration)s\n%(title)s" --no-download <url>`). If duration
@@ -120,92 +128,81 @@ file=@audio.mp3
 
 `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=<GEMINI_API_KEY>`
 
-The model reads the whole English SRT and returns a Myanmar SRT. It is allowed to
-**re-time** as well as translate. No exact prompt is fixed here — this is the
-behavioural contract the prompt must encode:
+The model reads the whole English SRT and returns a Myanmar SRT — translate only,
+no re-timing. The prompt contract (`buildPrompt`):
 
-- Translate the spoken text into **natural, modern conversational Myanmar**
-  narration — meaning over literal word-for-word.
-- **One Myanmar cue per English cue**, same sequence numbers, same order (1:1, no
-  merging or splitting). This keeps the mapping simple for the dubbing stage.
-- **Timestamps may be adjusted** by a few seconds per cue when it helps the
-  Myanmar line land naturally (Myanmar phrasing is often longer or shorter than
-  English). Cues must stay chronological and non-overlapping, with positive
-  durations.
-- **Soft goal: preserve the overall end time.** Try to keep the last cue's end
-  near the original total so the voice-over stays roughly aligned with the
-  original video (delivered alongside). This is best-effort, *not* a hard rule —
-  drifting a little is fine; drifting a lot is not.
+- Translate each line into **natural, modern conversational Myanmar** narration —
+  meaning over literal.
+- Keep **EXACTLY the same cues**: same number of blocks, same sequence numbers,
+  same `-->` timestamps, same order. One Myanmar cue per English cue. **Do NOT
+  merge, split, drop, reorder, or re-time.** (Granular cues = good subtitles;
+  earlier "you may merge" wording made Gemini collapse 24 cues into 9 giant
+  blocks.)
 - Return raw SRT only — no markdown fences, no commentary.
-
-Why allow re-timing: the dubbing stage (5) fits speech into each cue's window. If
-Gemini pre-widens a window that English made too tight, Azure TTS speeds up less
-and the result sounds more natural. Gemini does the coarse re-timing; TTS does
-the fine fit.
 
 Hardening:
 
 - `temperature` low (~0.3) for structural stability.
-- Validate: result parses as SRT, **same cue count** as input, timestamps
-  monotonic and non-overlapping (clamp small overlaps rather than fail). On a
-  count mismatch, retry once, then fail the job with a clear message.
-- End-time drift is **logged, not failed** — it's a soft target.
+- Validation is **lenient**: require the result parses as SRT with ≥1 cue, then
+  `sanitizeTimings` (force chronological, non-overlapping, positive durations).
+  **No hard-fail on cue-count mismatch** — Gemini occasionally deviates, and
+  failing the whole job over it was worse than accepting a slightly-merged result.
+- One retry on any transient failure (rate limit, empty/garbled output).
 - **TODO (long video):** chunking for transcripts that exceed Gemini's token
-  limit is **not implemented yet** — current code sends the whole SRT in one
-  call. Only tested on short videos. See [TODO.md](TODO.md).
-
----
-
-## 5. Neural dubbing — Azure TTS (duration-matched)
-
-**Files:** `services/srt-tts.ts` (orchestration), `services/tts.ts` (synthesis)
-**In:** `my.srt` content  **Out:** `dub.wav` (timed), then `dub.m4a` (aac) via `audio.ts`
-
-Already implemented; the dubbing logic stays:
-
-- Synthesize each cue as raw 16 kHz PCM with `my-MM-ThihaNeural`.
-- If a cue's speech overruns its `end - start` window, re-synthesize with SSML
-  `<prosody rate>` = `speechDuration / window`, capped at `MAX_RATE` (2.5×).
-- Lay each cue onto the original timeline; fill gaps with silence so the
-  voice-over lines up with the source video's timing.
-- Assemble one WAV, then transcode to **AAC** (`services/audio.ts`, `-c:a aac`,
-  output `dub.m4a`). Was MP3 — changed because we deliver a standalone AAC track.
-
-Changes needed: default voice `my-MM-NilarNeural` → `my-MM-ThihaNeural`;
-`audio.ts` WAV→MP3 becomes WAV→AAC.
-
-- Windows come from the Myanmar SRT, which Gemini may already have re-timed to fit
-  (stage 4) — so the speed-up here is usually gentler than English timing alone
-  would force.
-- **TODO (overflow policy):** when Myanmar speech is *still* far longer than its
-  window even at `MAX_RATE`, the current code accepts overflow — later cues drift.
-  A proper policy (trim, borrow from the next gap, or re-balance) is **deferred**.
-  Gemini's re-timing reduces how often this bites, but doesn't eliminate it. See
+  limit is **not implemented yet** — the whole SRT goes in one call. See
   [TODO.md](TODO.md).
 
 ---
 
-## 6. Egress — Telegram (three files)
+## 5. Neural dubbing — Azure TTS
+
+**Files:** `services/srt-tts.ts` (orchestration), `services/tts.ts` (synthesis),
+`services/audio.ts` (encode)
+**In:** `my.srt` content  **Out:** `dub.wav` (timed), then `dub.mp3` via `audio.ts`
+
+- **One Azure request per cue** (`my-MM-ThihaNeural`, raw 16 kHz PCM). Per-cue,
+  *not* a single batched SSML — Azure's REST endpoint silently truncates long
+  single-request synthesis (a batched attempt returned only ~50 s of a 2.5-min
+  video). Per-cue requests are tiny and never truncate.
+- **Bounded concurrency** (`TTS_CONCURRENCY`, default 3) via `mapLimit` — firing
+  all cues at once trips Azure's 429 throttle on longer videos.
+- **Constant speed by default** (`TTS_MAX_RATE`, default 1) — no per-cue speed-up,
+  so the voice never sounds chipmunky; it just runs longer than the video (the
+  user adjusts in their editor). Set `TTS_MAX_RATE > 1` to re-enable fitting each
+  cue into its window via SSML `<prosody rate>`.
+- **Assemble on the timeline**: place each cue after the preceding silence, **gap
+  clamped to 30 s** (`MAX_GAP_SECONDS`) — a hallucinated far-future timestamp once
+  produced 59 min of silence → a 74 MB mp3 → Telegram 413.
+- **Encode to MP3** (`audio.ts`, `-c:a libmp3lame -b:a 160k`, output `dub.mp3`).
+  MP3 carries real duration metadata; raw ADTS `.aac` does not, so players
+  mis-estimate length and cut off at silences.
+
+`tts.ts` retries on **429/503 and empty 200s** (Azure silently returns an empty
+body under load, which would drop that cue) with backoff, up to 5 attempts.
+
+---
+
+## 6. Egress — Telegram (four files)
 
 **File:** `services/telegram.ts`
-**In:** `video.mp4`, `my.srt`, `dub.m4a`  **Out:** three messages to the user
+**In:** `video.mp4`, `en.srt`, `my.srt`, `dub.mp3`  **Out:** four messages to the user
 
-No mux — the user receives the parts and combines them as they like.
-
-All three are delivered under a **shared base name derived from the video title**
-(see *Filenames*), so they group together in the chat:
+No mux — the user receives the parts and combines them as they like. All share a
+**base name derived from the video title** (see *Filenames*), so they group in the
+chat:
 
 - Send, in order:
-  1. `<slug>.mp4` via `sendVideo` (falls back to `sendDocument` if oversized).
-  2. `<slug>.srt` via `sendDocument` (mime `application/x-subrip`).
-  3. `<slug>.m4a` via `sendAudio` (the Myanmar voice-over).
-- New client method: `sendVideo(chatId, bytes, filename)` (multipart, like the
-  existing `sendAudio`).
-- **50 MB cap (v1).** Telegram's bot upload limit is 50 MB **per file**. The
-  original `video.mp4` is the one most likely to exceed it; if it does, send it as
-  a document, or if still too large, fail with `❌ Video too large (>50 MB)`. The
-  SRT and AAC are tiny and never hit the cap. Splitting/compression is out of
-  scope for now.
+  1. `<slug>.mp4` via `sendVideo`.
+  2. `<slug>.my.srt` via `sendDocument` (mime `application/x-subrip`).
+  3. `<slug>.en.srt` via `sendDocument`.
+  4. `<slug>.mp3` via `sendAudio` (Telegram's native audio = inline player); on
+     rejection, falls back to `sendDocument`.
+- **Each upload is independent and retried 3×.** Telegram occasionally drops the
+  socket mid-upload (`ECONNRESET`); a failure on one file must not abort the job
+  or block the others. Failures are logged, not fatal.
+- **Oversized video (>50 MB):** Telegram's per-file bot upload cap. If `video.mp4`
+  exceeds it, **skip the video with a warning** and still send the SRTs + mp3 — a
+  partial result beats nothing. (The 480p cap from stage 2 makes this rare.)
 - The `file_id`s Telegram returns are **not stored** — there is no cache.
 - In a `finally` (success or failure), **wipe all state for the job**: delete the
   `jobs` row (releasing the per-user lock) and remove the temp dir. Mandatory.
@@ -218,8 +215,9 @@ lowercase snake_case (`lib/slug.ts`):
 ```
 "How to Cook Rice (2024) — Easy!"  →  how_to_cook_rice_2024_easy
    → how_to_cook_rice_2024_easy.mp4
-   → how_to_cook_rice_2024_easy.srt
-   → how_to_cook_rice_2024_easy.m4a
+   → how_to_cook_rice_2024_easy.en.srt
+   → how_to_cook_rice_2024_easy.my.srt
+   → how_to_cook_rice_2024_easy.mp3
 ```
 
 Slug rules:
@@ -230,4 +228,4 @@ Slug rules:
   `youtube_id`** so a file is always named.
 
 Internal temp files keep fixed names (`video.mp4`, `audio.mp3`, `en.srt`,
-`my.srt`, `dub.m4a`); only the delivered filename uses the slug.
+`my.srt`, `dub.wav`, `dub.mp3`); only the delivered filename uses the slug.

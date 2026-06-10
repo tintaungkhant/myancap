@@ -30,7 +30,12 @@ cp .env.example .env
 | `AZURE_SPEECH_KEY`        | yes      | —                       | Azure Speech subscription key        |
 | `AZURE_SPEECH_REGION`     | yes      | `southeastasia`         | Azure region                         |
 | `TTS_VOICE`               | no       | `my-MM-ThihaNeural`     | Azure Neural voice                   |
-| `DATABASE_PATH`           | no       | `/data/myancap.db`      | SQLite file (put on a volume!)       |
+| `TTS_MAX_RATE`            | no       | `1`                     | Max TTS speed-up; 1 = constant speed |
+| `TTS_CONCURRENCY`         | no       | `3`                     | Max parallel TTS calls (lower if 429)|
+| `MAX_VIDEO_HEIGHT`        | no       | `480`                   | Cap downloaded video resolution      |
+| `YTDLP_COOKIES`           | no       | —                       | Path to cookies.txt (bot-check)      |
+| `YTDLP_PLAYER_CLIENT`     | no       | —                       | yt-dlp player client (e.g. `tv`)     |
+| `DATABASE_PATH`           | no       | `/data/myancap.db`      | SQLite file (volume optional)        |
 | `WORK_DIR`                | no       | `/tmp/myancap`          | Per-job temp directory root          |
 | `MAX_CONCURRENT_JOBS`     | no       | `1`                     | In-process job concurrency cap       |
 | `MAX_VIDEO_SECONDS`       | no       | `900`                   | Reject videos longer than this (15m) |
@@ -83,9 +88,8 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getWebhookInfo"
 ## Smoke test
 
 1. Send your bot a YouTube link.
-2. Expect: `🎬 Working on it…`, then per-stage progress, then three files back —
-   the original video, the Myanmar `.srt`, and the Myanmar voice-over (`.m4a`).
-3. Tail logs for the per-stage timings (`job <id> stage …`).
-
-The legacy `/tts` and `/tts/srt` HTTP routes remain useful for testing the
-dubbing core in isolation without going through YouTube.
+2. Expect: `🎬 လုပ်ဆောင်နေသည်`, then per-stage Burmese progress, then four files
+   back — the original video, `.en.srt`, `.my.srt`, and the voice-over (`.mp3`).
+3. The only HTTP routes are `GET /` (health → `MyanCap up`) and
+   `POST /telegram/webhook`. On failure the bot replies `❌ မအောင်မြင်ပါ — <reason>`;
+   the full error is logged server-side (`job <id> failed: …`).

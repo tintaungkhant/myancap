@@ -3,9 +3,10 @@
 ## Goal
 
 Turn an English YouTube video into a Myanmar localization kit — the original
-video, a Myanmar subtitle file, and a timed Myanmar voice-over — end to end, with
-no human in the loop. The only user action is pasting a link into a Telegram chat.
-**The three outputs are delivered separately; the bot does not mux them.**
+video, the English subtitles, the Myanmar subtitles, and a timed Myanmar
+voice-over (mp3) — end to end, with no human in the loop. The only user action is
+pasting a link into a Telegram chat. **The four outputs are delivered separately;
+the bot does not mux them.**
 
 ## High-level diagram
 
@@ -24,9 +25,9 @@ no human in the loop. The only user action is pasting a link into a Telegram cha
             │   1 youtube.ts    yt-dlp ─▶ video.mp4 + audio.mp3     │
             │   2 transcribe.ts whisper-1 ─▶ en.srt                 │
             │   3 translate.ts  Gemini ─▶ my.srt                    │
-            │   4 srt-tts.ts    Azure TTS ─▶ dub.wav (timed)        │
-            │   5 audio.ts      ffmpeg ─▶ dub.m4a (aac)             │
-            │   6 telegram.ts   send video.mp4 + my.srt + dub.m4a   │
+            │   4 srt-tts.ts    Azure TTS ─▶ dub.wav (per-cue)      │
+            │   5 audio.ts      ffmpeg ─▶ dub.mp3                   │
+            │   6 telegram.ts   send mp4 + en.srt + my.srt + mp3    │
             └───────────────────────────────────────────────────────┘
                    │                  │              │
                    ▼                  ▼              ▼

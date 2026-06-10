@@ -1,8 +1,9 @@
 # MyanCap
 
 Automated **English → Myanmar localization** pipeline. Send a Telegram bot a
-YouTube link; get back three files — the original video, a Myanmar subtitle
-track, and a timed Myanmar voice-over. Combine them however you like.
+YouTube link; get back four files — the original video, the English subtitles,
+the Myanmar subtitles, and a timed Myanmar voice-over (mp3). Combine them however
+you like (e.g. CapCut).
 
 Transcription uses OpenAI `whisper-1`. Translation uses Google Gemini. Speech
 uses Azure Neural TTS. `yt-dlp` + `ffmpeg` handle media. Served by Bun + Elysia,
@@ -15,8 +16,8 @@ Telegram (YT link)
   → yt-dlp        download video.mp4 + extract audio.mp3
   → whisper-1     audio.mp3 → English .srt   (OpenAI API, timestamped)
   → Gemini Flash  EN .srt → Myanmar .srt
-  → Azure TTS     MY .srt → timed AAC        (prosody-rate duration match)
-  → Telegram      send 3 files: video + my.srt + dub.m4a
+  → Azure TTS     MY .srt → timed MP3        (per-cue, constant speed)
+  → Telegram      send 4 files: video + en.srt + my.srt + dub.mp3
 ```
 
 ## Quick start
@@ -49,6 +50,6 @@ Then register the Telegram webhook → see [docs/SETUP.md](docs/SETUP.md).
 
 ## Status
 
-Dubbing core (SRT → timed Myanmar audio) works today. Upstream half
-(YouTube → transcription → translation) and 3-file delivery are next — see
-the gap table in [CLAUDE.md](CLAUDE.md#current-state-vs-target).
+Implemented and running end-to-end. See [CLAUDE.md](CLAUDE.md#status) for the
+hardening notes (TTS retries, gap clamp, mp3, resilient uploads) and
+[docs/TODO.md](docs/TODO.md) for deferred work.

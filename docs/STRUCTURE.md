@@ -32,7 +32,7 @@ myancap-server/
     │   ├── translate.ts      Gemini REST client
     │   ├── tts.ts            Azure TTS single-utterance synth      (exists)
     │   ├── srt-tts.ts        SRT → timed WAV, duration-matched     (exists)
-    │   ├── audio.ts          ffmpeg WAV → AAC                      (was MP3)
+    │   ├── audio.ts          ffmpeg WAV → MP3
     │   ├── telegram.ts       Telegram Bot API client              (exists)
     │   └── store.ts          DB queries: job lifecycle + webhook dedup
     ├── handlers/
@@ -69,19 +69,10 @@ index.ts ─▶ handlers ─▶ pipeline ─▶ services ─▶ lib
 | Pure data helpers (no I/O)          | `lib/`                              |
 | A new SQL query / table             | `lib/db.ts` (schema) + `services/store.ts` (query) |
 
-## Refactors implied by this structure
+## Status
 
-The existing code predates this layout. As stages are built, migrate:
-
-1. **Extract SRT parsing** from `services/srt-tts.ts` into `lib/srt.ts`
-   (`translate.ts` needs the same parse/serialize, so it must be shared).
-2. **Introduce `config.ts`**; move `process.env` reads out of services as they
-   are touched.
-3. **Rework `handlers/telegram-webhook.ts`** from "SRT text → audio" to
-   "YouTube link → pipeline".
-4. **Add `sendVideo`** to `services/telegram.ts` (for the 3-file delivery).
-5. **Default voice** in `services/tts.ts`: `my-MM-NilarNeural` → `my-MM-ThihaNeural`.
-6. **`audio.ts` WAV→MP3 becomes WAV→AAC** (we ship a standalone AAC track).
-
-These are incremental; the existing dubbing core (`srt-tts` + `tts` + `audio`)
-is sound and stays — only the output codec changes.
+This layout is **fully implemented**. The original starter only had the dubbing
+core (`srt-tts` + `tts` + `audio` + `telegram`) wired to an SRT-text webhook; the
+YouTube ingress, `youtube`/`transcribe`/`translate` services, `pipeline/`,
+`lib/`, `config.ts`, and the SQLite store were all added, and the webhook was
+reworked from "SRT text → audio" to "YouTube link → pipeline".

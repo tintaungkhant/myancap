@@ -16,16 +16,15 @@ Two separate caps both hit on long videos:
 - **Not done because:** only short videos are being tested right now. `MAX_VIDEO_
   SECONDS` keeps inputs under both caps for v1. See [PIPELINE.md](PIPELINE.md).
 
-### Duration-overflow policy (TTS sync drift)
-- **Problem:** when Myanmar speech is far longer than its subtitle window even at
-  `MAX_RATE` (2.5×), the extra audio pushes later cues out of sync.
-- **Partly mitigated:** Gemini may re-time cues in stage 4 (widen tight windows,
-  while trying to keep the overall end time), so the speed-up is gentler. This
-  reduces drift but doesn't remove it — a long cue can still overflow.
-- **Not fully solved because:** acceptable for current test clips; needs design.
-- **Options to weigh later:** clip the audio, extend the window into the following
-  gap, redistribute slack across neighbouring cues, or prompt Gemini for shorter
-  Myanmar phrasings on cues that overflow. See [PIPELINE.md](PIPELINE.md) stage 5.
+### TTS sync drift (accepted, not solved)
+- **Behaviour:** at the default constant speed (`TTS_MAX_RATE=1`), Myanmar speech
+  is usually longer than the English windows, so the voice-over runs longer than
+  the video and drifts out of sync. **Accepted** — the dub is a separate file and
+  the user adjusts timing in their editor (CapCut).
+- **If tighter sync is wanted later:** set `TTS_MAX_RATE > 1` to compress cues into
+  their windows (re-enables the per-cue prosody-rate path), or design a smarter
+  policy (borrow from the next gap, redistribute slack, ask Gemini for shorter
+  phrasings on overflowing cues). See [PIPELINE.md](PIPELINE.md) stage 5.
 
 ### Auth / onboarding
 - **Decision:** intentionally **no auth in v1.** Bot is effectively open.
@@ -35,10 +34,9 @@ Two separate caps both hit on long videos:
 
 ## Known limits accepted for v1
 
-- **50 MB delivery cap:** the original video is sent as-is; if it exceeds
-  Telegram's 50 MB bot upload limit it falls back to a document, and if still too
-  large the job fails with a message. No splitting/compression. (Subtitle + AAC
-  are tiny and never hit the cap.)
+- **50 MB delivery cap:** if `video.mp4` exceeds Telegram's 50 MB per-file bot
+  limit it is **skipped with a warning** and the SRTs + mp3 are still sent. No
+  splitting/compression. (The 480p cap makes this rare; the SRTs + mp3 are tiny.)
 - **No job recovery:** a process crash loses in-flight jobs silently. User
   resends. No durable queue.
 - **Single process / in-process queue:** `MAX_CONCURRENT_JOBS` caps concurrency
@@ -55,8 +53,8 @@ Two separate caps both hit on long videos:
 ## Nice-to-have (unscheduled)
 
 - Per-user usage/cost log (OpenAI + Azure minutes) — a `usage` table.
-- Optional muxed output (`-c:v copy`) as a 4th file, if a user wants one stitched
-  video instead of assembling the parts themselves.
+- Optional muxed output (`-c:v copy`) as an extra file, if a user wants one
+  stitched video instead of assembling the parts themselves.
 - `/status` command to report a user's current job stage.
 - yt-dlp auto-update step (extractors rot against YouTube changes).
 - Cookies file support for age-gated / members-only videos.

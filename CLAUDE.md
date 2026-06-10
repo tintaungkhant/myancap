@@ -5,9 +5,10 @@ Guidance for Claude Code (and humans) working in this repo.
 ## What this is
 
 **MyanCap** — an automated video localization / dubbing pipeline. A user sends
-an English YouTube link to a Telegram bot and gets back three files: the original
-video, a Myanmar subtitle track, and a timed Myanmar voice-over. **The bot does
-not mux them** — the user combines what they want, in whatever player.
+an English YouTube link to a Telegram bot and gets back four files: the original
+video, the English subtitles, the Myanmar subtitles, and a timed Myanmar
+voice-over. **The bot does not mux them** — the user combines what they want, in
+whatever player (e.g. CapCut).
 
 Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 `whisper-1` API. Translation uses Google Gemini. Speech uses Azure Neural TTS.
@@ -17,11 +18,11 @@ Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 
 ```
 Telegram (YT link)
-  → yt-dlp        download video.mp4 + extract compressed audio.mp3
+  → yt-dlp        download video.mp4 (avc1 ≤480p) + extract audio.mp3
   → whisper-1     audio.mp3 → English .srt        (OpenAI API, timestamped)
-  → Gemini 2.5 Flash  EN .srt → Myanmar .srt       (translate + soft re-time)
-  → Azure TTS     MY .srt → timed AAC voice-over    (prosody-rate duration match)
-  → Telegram      send 3 files: video.mp4 + my.srt + dub.m4a
+  → Gemini 2.5 Flash  EN .srt → Myanmar .srt       (translate, 1:1 cues)
+  → Azure TTS     MY .srt → timed MP3 voice-over    (per-cue, constant speed)
+  → Telegram      send 4 files: video.mp4 + en.srt + my.srt + dub.mp3
 ```
 
 No muxing step. Full detail: [docs/PIPELINE.md](docs/PIPELINE.md).
@@ -37,7 +38,7 @@ No muxing step. Full detail: [docs/PIPELINE.md](docs/PIPELINE.md).
 | Transcription  | OpenAI `whisper-1` (REST, returns SRT)    |
 | Translation    | Google Gemini `gemini-2.5-flash` (REST)   |
 | TTS            | Azure Neural TTS `my-MM-ThihaNeural` (REST)|
-| Media          | `ffmpeg` (CLI — extract + WAV→AAC)        |
+| Media          | `ffmpeg` (CLI — extract + WAV→MP3)        |
 | Delivery       | Telegram Bot API (REST)                    |
 | Storage        | SQLite via `bun:sqlite` (built-in)        |
 | Packaging      | Single-stage Dockerfile                    |
@@ -64,10 +65,10 @@ src/
     youtube.ts             yt-dlp: downloadVideo() + extractAudio() (mp3)
     transcribe.ts          OpenAI whisper-1: transcribe() → English srt
     translate.ts           Gemini: translateSrt() EN → MY
-    tts.ts                 Azure TTS single-utterance synth (exists)
-    srt-tts.ts             SRT → timed WAV, duration-matched (exists)
-    audio.ts               ffmpeg WAV → AAC (was MP3)
-    telegram.ts            Telegram Bot API client (exists)
+    tts.ts                 Azure TTS synth (SSML, retry on 429/empty)
+    srt-tts.ts             SRT → timed WAV (per-cue, gap-clamped)
+    audio.ts               ffmpeg WAV → MP3
+    telegram.ts            Telegram Bot API client (send + file_id)
     store.ts               DB queries: job lifecycle + webhook dedup
   handlers/
     telegram-webhook.ts    parse update, route YT link → pipeline
@@ -89,28 +90,23 @@ mounted volume (`DATABASE_PATH`), though it now carries no cache worth persistin
 
 Full rationale: [docs/STRUCTURE.md](docs/STRUCTURE.md).
 
-## Current state vs target
+## Status
 
-What already exists (the **downstream half** — SRT → dubbed audio):
+The full pipeline is **implemented and running** (all 6 stages, ingress gates,
+Docker). Notable hardening learned from production runs:
 
-- `services/telegram.ts` — sendMessage / sendAudio / sendDocument ✅
-- `services/tts.ts` — Azure TTS over REST, SSML prosody rate ✅
-- `services/srt-tts.ts` — SRT → timed WAV, silence gap-fill, rate-fit ✅
-- `services/audio.ts` — WAV → MP3 via ffmpeg ✅
-- `handlers/telegram-webhook.ts` — currently accepts **SRT text only** ⚠️
-
-What is **missing** and must be built (the **upstream half** + delivery):
-
-1. YouTube-link ingress (replace the `looksLikeSrt` gate)
-2. `services/youtube.ts` — yt-dlp download video + extract compressed mp3
-3. `services/transcribe.ts` — OpenAI whisper-1 transcription → English SRT
-4. `services/translate.ts` — Gemini EN→MY
-5. Default TTS voice swap `my-MM-NilarNeural` → `my-MM-ThihaNeural`
-6. `services/audio.ts` — change WAV→MP3 to WAV→AAC
-7. `sendVideo()` + `sendDocument` use for the 3-file delivery
-8. `pipeline/` orchestration + job temp-dir lifecycle
-9. `lib/db.ts` + `services/store.ts` — SQLite schema, job-lifecycle/dedup queries
-10. `Dockerfile` (single-stage) + a data volume for the SQLite file
+- **TTS robustness** — per-cue Azure synthesis, bounded concurrency
+  (`TTS_CONCURRENCY`) to avoid 429s, retry on 429/503 **and empty 200s** (Azure
+  silently drops cues under load), and a **30s clamp** on inter-cue silence (a
+  hallucinated far-future timestamp once produced 59 min of silence → 74 MB mp3).
+- **Audio format = MP3** (not aac/m4a) — raw ADTS `.aac` is headerless, so players
+  mis-estimate its duration and cut off at long silences; mp3 carries real
+  duration metadata.
+- **Resilient delivery** — each of the 4 uploads is independent and retried 3×, so
+  a dropped socket on one file doesn't abort the job.
+- **Oversized video** (>50 MB) → skipped with a warning; subtitles + dub still sent.
+- **Translation** — Gemini is asked for strict 1:1 cues (no merge/re-time), but
+  validation is lenient (won't hard-fail on a count mismatch).
 
 ## Conventions
 

@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   buildPrompt,
   sanitizeTimings,
-  validateCueCount,
   stripFences,
 } from "./translate";
 import type { Cue } from "../lib/srt";
@@ -10,14 +9,8 @@ import type { Cue } from "../lib/srt";
 test("buildPrompt states the core rules", () => {
   const p = buildPrompt("SRTHERE");
   expect(p).toContain("Myanmar");
-  expect(p).toContain("one Myanmar cue per English cue");
   expect(p).toContain("Return ONLY the raw SRT");
   expect(p).toContain("SRTHERE");
-});
-
-test("validateCueCount throws on mismatch", () => {
-  expect(() => validateCueCount(5, 4)).toThrow(/cue count/);
-  expect(() => validateCueCount(5, 5)).not.toThrow();
 });
 
 test("sanitizeTimings fixes overlaps and non-positive durations", () => {

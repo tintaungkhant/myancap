@@ -9,9 +9,8 @@ export function buildPrompt(enSrt: string): string {
     "You are translating an English SRT subtitle file into Myanmar (Burmese).",
     "Rules:",
     "- Translate the spoken text into natural, modern conversational Myanmar narration (meaning over literal).",
-    "- Output one Myanmar cue per English cue. Keep the same sequence numbers and order. Do not merge or split cues.",
-    "- You MAY adjust each cue's start/end by a few seconds so the Myanmar phrasing lands naturally. Keep cues chronological and non-overlapping, with positive durations.",
-    "- Try to keep the final cue's end time close to the original total. Best effort, not strict.",
+    "- Keep cues in chronological order with valid, non-overlapping `-->` timestamps. You MAY merge adjacent short lines into one natural Myanmar sentence (renumber sequentially) and adjust timings by a few seconds so phrasing lands naturally.",
+    "- Cover the same overall time span; try to keep the final cue's end time close to the original total. Best effort, not strict.",
     "- Return ONLY the raw SRT. No markdown fences, no commentary.",
     "",
     "English SRT:",
@@ -21,12 +20,6 @@ export function buildPrompt(enSrt: string): string {
 
 export function stripFences(text: string): string {
   return text.replace(/^```[a-z]*\n?/i, "").replace(/```\s*$/i, "").trim();
-}
-
-export function validateCueCount(enCount: number, myCount: number): void {
-  if (enCount !== myCount) {
-    throw new Error(`translation cue count mismatch: en=${enCount} my=${myCount}`);
-  }
 }
 
 /** Force chronological, non-overlapping, positive-duration cues. */
@@ -40,7 +33,6 @@ export function sanitizeTimings(cues: Cue[]): Cue[] {
 }
 
 async function translateOnce(enSrt: string): Promise<string> {
-  const enCount = parseSrt(enSrt).length;
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent` +
     `?key=${getConfig().geminiApiKey}`;
@@ -60,21 +52,17 @@ async function translateOnce(enSrt: string): Promise<string> {
   if (!text) throw new Error("gemini returned no text");
 
   const myCues = parseSrt(stripFences(text));
-  validateCueCount(enCount, myCues.length);
+  if (myCues.length === 0) throw new Error("translation produced no SRT cues");
+  // Accept whatever valid cue count Gemini returns — merging short lines into
+  // natural Myanmar is expected and fine. Just keep timings sane.
   return serializeSrt(sanitizeTimings(myCues));
 }
 
-/** Translate, retrying once if the cue count comes back wrong. */
+/** Translate, with one retry for transient failures (rate limits, flaky output). */
 export async function translateSrt(enSrt: string): Promise<string> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      return await translateOnce(enSrt);
-    } catch (e) {
-      lastErr = e;
-      const retryable = e instanceof Error && e.message.includes("cue count");
-      if (!retryable) throw e;
-    }
+  try {
+    return await translateOnce(enSrt);
+  } catch {
+    return await translateOnce(enSrt);
   }
-  throw lastErr;
 }

@@ -130,14 +130,6 @@ async function perCueSynthesize(
 ): Promise<Uint8Array> {
   const audios = await mapLimit(cues, concurrency, (cue) => synthCue(cue, voice, maxRate));
 
-  // Diagnostic: per-cue synthesized seconds + total speech. Reveals if Azure is
-  // returning short/empty audio for some cues.
-  const durs = audios.map((a) => Number(pcmDuration(a.length).toFixed(2)));
-  const totalSpeech = durs.reduce((a, b) => a + b, 0);
-  console.log(
-    `tts: ${cues.length} cues, maxRate=${maxRate}, speech=${totalSpeech.toFixed(1)}s, per-cue=[${durs.join(",")}]`,
-  );
-
   const parts: Uint8Array[] = [];
   let cursor = 0; // current timeline position, seconds
   cues.forEach((cue, i) => {
@@ -149,8 +141,6 @@ async function perCueSynthesize(
     cursor = cursor + gap + pcmDuration(audios[i].length);
   });
 
-  const totalSecs = parts.reduce((n, p) => n + p.length, 0) / BYTES_PER_SEC;
-  console.log(`tts: assembled ${totalSecs.toFixed(1)}s WAV`);
   return concatPcm(parts);
 }
 

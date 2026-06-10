@@ -122,7 +122,6 @@ export async function runJob(
       deps.sendDocument(job.chatId, new TextEncoder().encode(enSrt), `${base}.en.srt`, "application/x-subrip"),
     );
     const mp3Bytes = new Uint8Array(await Bun.file(mp3Path).arrayBuffer());
-    console.log(`job ${job.id}: sending mp3 (${mp3Bytes.byteLength} bytes)`);
     await send("sendMp3", async () => {
       // Prefer inline-playable audio; if Telegram rejects it, deliver as a document.
       try {

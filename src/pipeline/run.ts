@@ -112,7 +112,13 @@ export async function runJob(
       "application/x-subrip",
     );
     const mp3Bytes = new Uint8Array(await Bun.file(mp3Path).arrayBuffer());
-    await deps.sendAudio(job.chatId, mp3Bytes, `${base}.mp3`);
+    // Prefer inline-playable audio; if Telegram rejects it, deliver as a document
+    // so the user always gets the dub.
+    try {
+      await deps.sendAudio(job.chatId, mp3Bytes, `${base}.mp3`);
+    } catch {
+      await deps.sendDocument(job.chatId, mp3Bytes, `${base}.mp3`, "audio/mpeg");
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await deps.sendMessage(job.chatId, `❌ မအောင်မြင်ပါ — ${msg}`).catch(() => {});

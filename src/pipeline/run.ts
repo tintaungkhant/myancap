@@ -99,7 +99,13 @@ export async function runJob(
     await deps.sendDocument(
       job.chatId,
       new TextEncoder().encode(mySrt),
-      `${base}.srt`,
+      `${base}.my.srt`,
+      "application/x-subrip",
+    );
+    await deps.sendDocument(
+      job.chatId,
+      new TextEncoder().encode(enSrt),
+      `${base}.en.srt`,
       "application/x-subrip",
     );
     const aacBytes = new Uint8Array(await Bun.file(aacPath).arrayBuffer());

@@ -8,9 +8,8 @@ export function buildPrompt(enSrt: string): string {
   return [
     "You are translating an English SRT subtitle file into Myanmar (Burmese).",
     "Rules:",
-    "- Translate the spoken text into natural, modern conversational Myanmar narration (meaning over literal).",
-    "- Keep cues in chronological order with valid, non-overlapping `-->` timestamps. You MAY merge adjacent short lines into one natural Myanmar sentence (renumber sequentially) and adjust timings by a few seconds so phrasing lands naturally.",
-    "- Cover the same overall time span; try to keep the final cue's end time close to the original total. Best effort, not strict.",
+    "- Translate each subtitle line into natural, modern conversational Myanmar (meaning over literal).",
+    "- Keep EXACTLY the same cues as the input: the same number of blocks, the same sequence numbers, and the same `-->` timestamp lines, in the same order. Translate one Myanmar cue per English cue. Do NOT merge, split, drop, reorder, or re-time cues.",
     "- Return ONLY the raw SRT. No markdown fences, no commentary.",
     "",
     "English SRT:",

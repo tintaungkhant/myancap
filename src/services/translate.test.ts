@@ -9,6 +9,7 @@ import type { Cue } from "../lib/srt";
 test("buildPrompt states the core rules", () => {
   const p = buildPrompt("SRTHERE");
   expect(p).toContain("Myanmar");
+  expect(p).toContain("Do NOT merge");
   expect(p).toContain("Return ONLY the raw SRT");
   expect(p).toContain("SRTHERE");
 });

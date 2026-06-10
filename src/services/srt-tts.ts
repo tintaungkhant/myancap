@@ -7,7 +7,7 @@
  * window are sped up (SSML prosody rate) to fit.
  */
 
-import { synthesizeSpeech, synthesizeSsml, escapeXml, DEFAULT_VOICE } from "./tts";
+import { synthesizeSpeech, DEFAULT_VOICE } from "./tts";
 import { parseSrt, type Cue } from "../lib/srt";
 
 // Re-export so existing importers of parseSrt from this module keep working.
@@ -20,8 +20,6 @@ const BYTES_PER_SEC = SAMPLE_RATE * BYTES_PER_SAMPLE;
 const PCM_FORMAT = "raw-16khz-16bit-mono-pcm";
 const DEFAULT_MAX_RATE = 1; // 1 = constant natural speed (no per-cue speed-up)
 const DEFAULT_CONCURRENCY = 3; // cap parallel Azure calls to avoid 429 throttling
-const BATCH_SIZE = 50; // cues per batched SSML request (bounds audio length/size)
-const MAX_BREAK_MS = 5000; // Azure cap per <break> tag
 
 export type SrtTtsOptions = {
   voice?: string;
@@ -104,64 +102,6 @@ function concatPcm(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-// ---------------------------------------------------------------------------
-// Batched path (constant speed) — one SSML request per BATCH_SIZE cues, with
-// <break> tags for the gaps. Far fewer Azure requests than one-per-cue.
-// ---------------------------------------------------------------------------
-
-/** Render `seconds` of silence as one or more `<break>` tags (Azure caps each). */
-export function breakTags(seconds: number): string {
-  let ms = Math.max(0, Math.round(seconds * 1000));
-  let out = "";
-  while (ms > 0) {
-    const chunk = Math.min(MAX_BREAK_MS, ms);
-    out += `<break time="${chunk}ms"/>`;
-    ms -= chunk;
-  }
-  return out;
-}
-
-/** Silence before each cue = gap from the previous cue's end (0 for the first). */
-export function preBreaks(cues: Cue[]): number[] {
-  return cues.map((c, i) => (i === 0 ? c.start : Math.max(0, c.start - cues[i - 1].end)));
-}
-
-export function buildBatchSsml(cues: Cue[], pre: number[], voice: string): string {
-  const locale = voice.split("-").slice(0, 2).join("-");
-  let body = "";
-  cues.forEach((c, k) => {
-    body += breakTags(pre[k]) + escapeXml(c.text) + " ";
-  });
-  return `<speak version="1.0" xml:lang="${locale}"><voice xml:lang="${locale}" name="${voice}">${body}</voice></speak>`;
-}
-
-async function batchSynthesize(
-  cues: Cue[],
-  voice: string,
-  concurrency: number,
-): Promise<Uint8Array> {
-  const pre = preBreaks(cues);
-
-  type Batch = { cues: Cue[]; pre: number[] };
-  const batches: Batch[] = [];
-  for (let i = 0; i < cues.length; i += BATCH_SIZE) {
-    batches.push({ cues: cues.slice(i, i + BATCH_SIZE), pre: pre.slice(i, i + BATCH_SIZE) });
-  }
-
-  // Each batch ends on its last cue's speech (no trailing silence) and the next
-  // batch opens with that cue's leading break — so concatenation is seamless.
-  const pcms = await mapLimit(batches, concurrency, async (b) => {
-    const ssml = buildBatchSsml(b.cues, b.pre, voice);
-    return new Uint8Array(await synthesizeSsml(ssml, PCM_FORMAT));
-  });
-
-  return concatPcm(pcms);
-}
-
-// ---------------------------------------------------------------------------
-// Per-cue path (used only when maxRate > 1, to fit speech into each window).
-// ---------------------------------------------------------------------------
-
 /** Synthesize one cue, speeding up if its speech overruns the window. */
 async function synthCue(cue: Cue, voice: string, maxRate: number): Promise<Uint8Array> {
   const window = cue.end - cue.start;
@@ -201,10 +141,9 @@ async function perCueSynthesize(
 }
 
 /**
- * Render an SRT string into a single timed WAV buffer.
- *
- * At constant speed (maxRate <= 1) it uses the batched-SSML path (few requests).
- * When maxRate > 1 it falls back to per-cue synthesis to fit each window.
+ * Render an SRT string into a single timed WAV buffer. One Azure request per cue
+ * (kept small — the REST endpoint truncates long single-request synthesis),
+ * bounded by `concurrency` to avoid 429 throttling.
  */
 export async function srtToSpeech(
   srt: string,
@@ -217,10 +156,6 @@ export async function srtToSpeech(
   const maxRate = options.maxRate ?? DEFAULT_MAX_RATE;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 
-  const pcm =
-    maxRate > 1
-      ? await perCueSynthesize(cues, voice, maxRate, concurrency)
-      : await batchSynthesize(cues, voice, concurrency);
-
+  const pcm = await perCueSynthesize(cues, voice, maxRate, concurrency);
   return pcmToWav(pcm);
 }

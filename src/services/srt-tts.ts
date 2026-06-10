@@ -20,6 +20,8 @@ const BYTES_PER_SEC = SAMPLE_RATE * BYTES_PER_SAMPLE;
 const PCM_FORMAT = "raw-16khz-16bit-mono-pcm";
 const DEFAULT_MAX_RATE = 1; // 1 = constant natural speed (no per-cue speed-up)
 const DEFAULT_CONCURRENCY = 3; // cap parallel Azure calls to avoid 429 throttling
+const MAX_GAP_SECONDS = 30; // clamp silence between cues — guards against a bogus
+                            // far-future timestamp creating minutes of silence
 
 export type SrtTtsOptions = {
   voice?: string;
@@ -139,12 +141,16 @@ async function perCueSynthesize(
   const parts: Uint8Array[] = [];
   let cursor = 0; // current timeline position, seconds
   cues.forEach((cue, i) => {
-    const gap = cue.start - cursor;
+    // Clamp the gap: negative (previous cue overran) → 0; absurdly large (bad
+    // timestamp) → MAX_GAP_SECONDS. Place this cue after the clamped silence.
+    const gap = Math.max(0, Math.min(MAX_GAP_SECONDS, cue.start - cursor));
     if (gap > 0) parts.push(silence(gap));
     parts.push(audios[i]);
-    cursor = Math.max(cursor, cue.start) + pcmDuration(audios[i].length);
+    cursor = cursor + gap + pcmDuration(audios[i].length);
   });
 
+  const totalSecs = parts.reduce((n, p) => n + p.length, 0) / BYTES_PER_SEC;
+  console.log(`tts: assembled ${totalSecs.toFixed(1)}s WAV`);
   return concatPcm(parts);
 }
 

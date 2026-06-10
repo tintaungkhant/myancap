@@ -1,18 +1,21 @@
 /** Audio conversion helpers. Shells out to ffmpeg (file in -> file out). */
 
-export function aacArgs(inputPath: string, outputPath: string): string[] {
+export function mp3Args(inputPath: string, outputPath: string): string[] {
   return [
     "-hide_banner", "-loglevel", "error", "-y",
     "-i", inputPath,
-    "-c:a", "aac", "-b:a", "160k",
-    "-f", "adts", // raw AAC stream (.aac) — plays in CapCut; m4a container does not
+    "-c:a", "libmp3lame", "-b:a", "160k",
     outputPath,
   ];
 }
 
-/** Convert a WAV file to a raw AAC (.aac, ADTS) file. */
-export async function wavToAac(inputPath: string, outputPath: string): Promise<void> {
-  const proc = Bun.spawn(["ffmpeg", ...aacArgs(inputPath, outputPath)], {
+/**
+ * Convert a WAV file to an MP3 file. MP3 (unlike raw ADTS .aac) carries real
+ * duration metadata, so players don't mis-estimate length and cut off at long
+ * silences. Universally supported by CapCut + Telegram's native audio player.
+ */
+export async function wavToMp3(inputPath: string, outputPath: string): Promise<void> {
+  const proc = Bun.spawn(["ffmpeg", ...mp3Args(inputPath, outputPath)], {
     stdout: "pipe",
     stderr: "pipe",
   });

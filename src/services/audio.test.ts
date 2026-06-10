@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
-import { aacArgs } from "./audio";
+import { mp3Args } from "./audio";
 
-test("aacArgs encodes input to raw ADTS aac at output path", () => {
-  const a = aacArgs("/d/dub.wav", "/d/dub.aac");
+test("mp3Args encodes input to mp3 at output path", () => {
+  const a = mp3Args("/d/dub.wav", "/d/dub.mp3");
   expect(a).toContain("/d/dub.wav");
-  expect(a).toContain("/d/dub.aac");
-  expect(a.join(" ")).toContain("-c:a aac");
-  expect(a.join(" ")).toContain("-f adts");
+  expect(a).toContain("/d/dub.mp3");
+  expect(a.join(" ")).toContain("-c:a libmp3lame");
 });

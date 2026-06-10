@@ -6,10 +6,11 @@ import * as youtube from "../services/youtube";
 import { transcribe } from "../services/transcribe";
 import { translateSrt } from "../services/translate";
 import { srtToSpeech } from "../services/srt-tts";
-import { wavToAac } from "../services/audio";
+import { wavToMp3 } from "../services/audio";
 import {
   sendVideo,
   sendDocument,
+  sendAudio,
   sendMessage,
 } from "../services/telegram";
 import { slugify } from "../lib/slug";
@@ -28,9 +29,10 @@ export type RunDeps = {
   transcribe: typeof transcribe;
   translateSrt: typeof translateSrt;
   srtToSpeech: typeof srtToSpeech;
-  wavToAac: typeof wavToAac;
+  wavToMp3: typeof wavToMp3;
   sendVideo: typeof sendVideo;
   sendDocument: typeof sendDocument;
+  sendAudio: typeof sendAudio;
   sendMessage: typeof sendMessage;
 };
 
@@ -40,9 +42,10 @@ const defaultDeps: RunDeps = {
   transcribe,
   translateSrt,
   srtToSpeech,
-  wavToAac,
+  wavToMp3,
   sendVideo,
   sendDocument,
+  sendAudio,
   sendMessage,
 };
 
@@ -79,9 +82,9 @@ export async function runJob(
       concurrency: cfg.ttsConcurrency,
     });
     const wavPath = join(job.dir, "dub.wav");
-    const aacPath = join(job.dir, "dub.aac");
+    const mp3Path = join(job.dir, "dub.mp3");
     await Bun.write(wavPath, wav);
-    await deps.wavToAac(wavPath, aacPath);
+    await deps.wavToMp3(wavPath, mp3Path);
 
     stage("send", "📤 file တွေပို့နေသည်");
     const base = slugify(meta.title, job.youtubeId);
@@ -108,10 +111,8 @@ export async function runJob(
       `${base}.en.srt`,
       "application/x-subrip",
     );
-    const aacBytes = new Uint8Array(await Bun.file(aacPath).arrayBuffer());
-    // Sent as a document, not sendAudio: Telegram's audio endpoint only accepts
-    // mp3/m4a and would reject a raw .aac. A document arrives untouched.
-    await deps.sendDocument(job.chatId, aacBytes, `${base}.aac`, "audio/aac");
+    const mp3Bytes = new Uint8Array(await Bun.file(mp3Path).arrayBuffer());
+    await deps.sendAudio(job.chatId, mp3Bytes, `${base}.mp3`);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await deps.sendMessage(job.chatId, `❌ မအောင်မြင်ပါ — ${msg}`).catch(() => {});

@@ -32,6 +32,7 @@ cp .env.example .env
 | `TTS_VOICE`               | no       | `my-MM-ThihaNeural`     | Azure Neural voice                   |
 | `TTS_MAX_RATE`            | no       | `1`                     | Max TTS speed-up; 1 = constant speed |
 | `TTS_CONCURRENCY`         | no       | `3`                     | Max parallel TTS calls (lower if 429)|
+| `TTS_GROUP_SECONDS`       | no       | `0`                     | Batch cues per ~N s/call; 0 = per-cue|
 | `MAX_VIDEO_HEIGHT`        | no       | `480`                   | Cap downloaded video resolution      |
 | `YTDLP_COOKIES`           | no       | —                       | Path to cookies.txt (bot-check)      |
 | `YTDLP_PLAYER_CLIENT`     | no       | —                       | yt-dlp player client (e.g. `tv`)     |

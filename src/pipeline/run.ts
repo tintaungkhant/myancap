@@ -14,7 +14,7 @@ import {
   sendMessage,
 } from "../services/telegram";
 import { slugify } from "../lib/slug";
-import { setJobStatus, deleteJob } from "../services/store";
+import { deleteJob } from "../services/store";
 import { cleanupJobDir, type Job } from "./job";
 
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
@@ -55,13 +55,15 @@ export async function runJob(
   deps: RunDeps = defaultDeps,
 ): Promise<void> {
   const cfg = getConfig();
-  const stage = (s: string, msg: string) => {
-    setJobStatus(db, job.id, "running", { stage: s, now: Date.now() });
+  // Report progress to the chat, one message per stage. Fire-and-forget: a failed
+  // status ping must not derail the pipeline. (The job row already holds the lock;
+  // no per-stage DB write is needed.)
+  const stage = (msg: string) => {
     void deps.sendMessage(job.chatId, msg).catch(() => {});
   };
 
   try {
-    stage("download", "⬇️ video download နေသည်");
+    stage("⬇️ video download နေသည်");
     const meta = await deps.probe(job.url);
     if (meta.durationSeconds > cfg.maxVideoSeconds) {
       const max = Math.round(cfg.maxVideoSeconds / 60);
@@ -69,24 +71,25 @@ export async function runJob(
     }
     const { videoPath, audioPath } = await deps.download(job.url, job.dir);
 
-    stage("transcribe", "📝 စာတန်းထိုးထုတ်နေသည်");
+    stage("📝 စာတန်းထိုးထုတ်နေသည်");
     const enSrt = await deps.transcribe(audioPath);
 
-    stage("translate", "🌐 ဘာသာပြန်နေသည်");
+    stage("🌐 ဘာသာပြန်နေသည်");
     const mySrt = await deps.translateSrt(enSrt);
 
-    stage("tts", "🎙️ မြန်မာသံထုတ်နေသည်");
+    stage("🎙️ မြန်မာသံထုတ်နေသည်");
     const wav = await deps.srtToSpeech(mySrt, {
       voice: cfg.ttsVoice,
       maxRate: cfg.maxTtsRate,
       concurrency: cfg.ttsConcurrency,
+      groupSeconds: cfg.ttsGroupSeconds,
     });
     const wavPath = join(job.dir, "dub.wav");
     const mp3Path = join(job.dir, "dub.mp3");
     await Bun.write(wavPath, wav);
     await deps.wavToMp3(wavPath, mp3Path);
 
-    stage("send", "📤 file တွေပို့နေသည်");
+    stage("📤 file တွေပို့နေသည်");
     const base = slugify(meta.title, job.youtubeId);
 
     // Each upload is independent and retried — a dropped socket on one file
@@ -105,14 +108,16 @@ export async function runJob(
       console.error(`job ${job.id}: ${label} gave up`);
     };
 
-    // The video may exceed Telegram's 50 MB upload cap. If so, skip it but still
-    // deliver the subtitle + dub — a partial result beats nothing.
-    const videoBytes = new Uint8Array(await Bun.file(videoPath).arrayBuffer());
-    if (videoBytes.byteLength > VIDEO_MAX_BYTES) {
+    // The video may exceed Telegram's 50 MB upload cap. Check the size without
+    // reading the file; if it fits, load the bytes and send. Skip-with-warning
+    // beats nothing — the subtitles + dub still go out below.
+    const videoFile = Bun.file(videoPath);
+    if (videoFile.size > VIDEO_MAX_BYTES) {
       await deps
         .sendMessage(job.chatId, "⚠️ video ကြီးလွန်းလို့ မပို့နိုင်ပါ — စာတန်းနဲ့ မြန်မာသံ ဖိုင်တွေပဲ ပို့ပါမယ်")
         .catch(() => {});
     } else {
+      const videoBytes = new Uint8Array(await videoFile.arrayBuffer());
       await send("sendVideo", () => deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`));
     }
     await send("sendMy", () =>

@@ -13,6 +13,7 @@ export type Config = {
   ttsVoice: string;
   maxTtsRate: number;
   ttsConcurrency: number;
+  ttsGroupSeconds: number;
   ytdlpCookies?: string;
   ytdlpPlayerClient?: string;
   databasePath: string;
@@ -45,6 +46,17 @@ function posInt(env: Env, key: string, def: number, errors: string[]): number {
   return n;
 }
 
+function nonNegInt(env: Env, key: string, def: number, errors: string[]): number {
+  const raw = env[key];
+  if (raw === undefined || raw === "") return def;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    errors.push(`${key} must be a non-negative integer (got "${raw}")`);
+    return def;
+  }
+  return n;
+}
+
 function floatAtLeast(env: Env, key: string, min: number, def: number, errors: string[]): number {
   const raw = env[key];
   if (raw === undefined || raw === "") return def;
@@ -70,6 +82,9 @@ export function loadConfig(env: Env = process.env): Config {
     ttsVoice: env.TTS_VOICE || "my-MM-ThihaNeural",
     maxTtsRate: floatAtLeast(env, "TTS_MAX_RATE", 1, 1, errors),
     ttsConcurrency: posInt(env, "TTS_CONCURRENCY", 3, errors),
+    // 0 = per-cue synthesis (one Azure call per cue). >0 = group cues into one
+    // call per ~N spoken seconds, cutting call volume (see srt-tts.ts).
+    ttsGroupSeconds: nonNegInt(env, "TTS_GROUP_SECONDS", 0, errors),
     ytdlpCookies: env.YTDLP_COOKIES,
     ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
     databasePath: env.DATABASE_PATH || "/data/myancap.db",

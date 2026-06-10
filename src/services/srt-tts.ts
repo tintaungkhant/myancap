@@ -36,6 +36,9 @@ export type SrtTtsOptions = {
   maxRate?: number;
   /** Max simultaneous TTS requests. Too high → Azure 429. */
   concurrency?: number;
+  /** 0 = one Azure call per cue. >0 = group cues into one call per ~N spoken
+   * seconds (fewer calls; some intra-group drift). */
+  groupSeconds?: number;
 };
 
 /** Map with a bounded number of concurrent workers; preserves input order. */
@@ -129,26 +132,6 @@ async function synthCue(cue: Cue, voice: string, maxRate: number): Promise<Uint8
 }
 
 /**
- * Single-request path: one SSML document for all cues, one Azure call. Cheaper
- * (1 request, no 429 risk) but the REST endpoint may truncate long synthesis —
- * that's the known tradeoff being re-tested. Inter-cue gaps come from the SRT
- * timestamps (clamped); drift from speech overrun is accepted.
- */
-async function batchSynthesize(cues: Cue[], voice: string): Promise<Uint8Array> {
-  const segments: SsmlSegment[] = [];
-  let cursor = 0; // SRT timeline position, seconds
-  cues.forEach((cue) => {
-    const gap = Math.max(0, Math.min(MAX_GAP_SECONDS, cue.start - cursor));
-    segments.push({ breakMs: gap * 1000, text: cue.text });
-    cursor = cue.end;
-  });
-
-  const ssml = buildBatchSsml(segments, voice);
-  const pcm = new Uint8Array(await synthesizeSsml(ssml, PCM_FORMAT));
-  return pcm;
-}
-
-/**
  * Group consecutive cues so each group's spoken length stays under `budgetSec`.
  * A cue larger than the budget becomes its own group. Estimate uses the cue's
  * SRT window (end - start) — the planned spoken length.
@@ -236,9 +219,10 @@ async function perCueSynthesize(
 }
 
 /**
- * Render an SRT string into a single timed WAV buffer. One Azure request per cue
- * (kept small — the REST endpoint truncates long single-request synthesis),
- * bounded by `concurrency` to avoid 429 throttling.
+ * Render an SRT string into a single timed WAV buffer. By default one Azure
+ * request per cue (kept small — the REST endpoint truncates long single-request
+ * synthesis); `groupSeconds > 0` batches cues into ~N-second groups to cut call
+ * volume. Either way bounded by `concurrency` to avoid 429 throttling.
  */
 export async function srtToSpeech(
   srt: string,
@@ -250,19 +234,13 @@ export async function srtToSpeech(
   const voice = options.voice ?? DEFAULT_VOICE;
   const maxRate = options.maxRate ?? DEFAULT_MAX_RATE;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
+  const groupSeconds = options.groupSeconds ?? 0;
 
-  // Path selection:
-  //   TTS_BATCH=1            → single request for the whole file (truncates on long input)
-  //   TTS_GROUP_SECONDS=<n>  → one request per group of cues bounded to ~n seconds
-  //   otherwise             → one request per cue (default, safest)
-  const groupSec = Number(process.env.TTS_GROUP_SECONDS);
-  let pcm: Uint8Array;
-  if (process.env.TTS_BATCH === "1") {
-    pcm = await batchSynthesize(cues, voice);
-  } else if (Number.isFinite(groupSec) && groupSec > 0) {
-    pcm = await groupSynthesize(cues, voice, groupSec, concurrency);
-  } else {
-    pcm = await perCueSynthesize(cues, voice, maxRate, concurrency);
-  }
+  // groupSeconds > 0 → one Azure call per group of cues (fewer calls); otherwise
+  // one call per cue (default, safest — no truncation, exact per-cue timing).
+  const pcm =
+    groupSeconds > 0
+      ? await groupSynthesize(cues, voice, groupSeconds, concurrency)
+      : await perCueSynthesize(cues, voice, maxRate, concurrency);
   return pcmToWav(pcm);
 }

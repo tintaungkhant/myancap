@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { openDb } from "../lib/db";
 import {
   insertJob,
-  setJobStatus,
   deleteJob,
   hasActiveJob,
   markUpdateProcessed,
@@ -20,14 +19,6 @@ test("insertJob then hasActiveJob is true; deleteJob clears it", () => {
   expect(hasActiveJob(db, 42)).toBe(true);
   deleteJob(db, "j1");
   expect(hasActiveJob(db, 42)).toBe(false);
-  db.close();
-});
-
-test("setJobStatus updates stage without clearing the active lock", () => {
-  const db = freshDb();
-  insertJob(db, { id: "j1", telegramId: 42, url: "u", youtubeId: "yt", now });
-  setJobStatus(db, "j1", "running", { stage: "transcribe", now });
-  expect(hasActiveJob(db, 42)).toBe(true);
   db.close();
 });
 

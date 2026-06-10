@@ -52,26 +52,26 @@ export async function handleUpdate(
   const telegramId = msg.from?.id ?? chatId;
   const now = Date.now();
 
-  // Gate 2: dedup Telegram retries.
+  // Gate 1: dedup Telegram retries.
   if (update.update_id !== undefined && !markUpdateProcessed(db, update.update_id, now)) {
     return;
   }
 
-  // Gate 3: must be a YouTube link.
+  // Gate 2: must be a YouTube link.
   const youtubeId = extractYouTubeId(msg.text);
   if (!youtubeId) {
     await deps.sendMessage(chatId, "❌ YouTube link ပို့ပါ").catch(() => {});
     return;
   }
 
-  // Gate 4: one active job per user (the only state that persists, and only
+  // Gate 3: one active job per user (the only state that persists, and only
   // while processing).
   if (hasActiveJob(db, telegramId)) {
     await deps.sendMessage(chatId, "⏳ ယခင် video ပြီးအောင် စောင့်ပါ").catch(() => {});
     return;
   }
 
-  // Gate 6: enqueue.
+  // Enqueue.
   const id = newJobId();
   const url = `https://www.youtube.com/watch?v=${youtubeId}`;
   insertJob(db, { id, telegramId, url, youtubeId, now });

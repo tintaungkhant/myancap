@@ -86,10 +86,12 @@ Each is a stateless module wrapping one external dependency. See
 A single SQLite file (`bun:sqlite`, WAL mode) holds two small tables — **no result
 cache**:
 
-- **`jobs`** — exists **only while a job is processing**. It is the per-user
-  lock: inserted when work starts, `stage` updated as it advances, and **deleted
-  on finish (success or fail)**. All rows are also cleared at boot (the in-process
-  queue doesn't survive restart, so any leftover row is a stale lock).
+- **`jobs`** — exists **only while a job is processing**. The row's mere
+  existence *is* the per-user lock: inserted when work starts, **deleted on
+  finish (success or fail)**. No status/stage is tracked (the pipeline runs in
+  memory; progress is sent to the chat, not stored). All rows are also cleared at
+  boot (the in-process queue doesn't survive restart, so any leftover row is a
+  stale lock).
 - **`processed_updates`** — `update_id` dedup so Telegram webhook retries don't
   spawn duplicate jobs.
 
@@ -101,16 +103,12 @@ worth persisting; wiping the volume is harmless.
 Schema (created on boot by `lib/db.ts`, `IF NOT EXISTS`):
 
 ```sql
-CREATE TABLE jobs (
+CREATE TABLE jobs (                            -- row exists = user has a job in flight
   id          TEXT PRIMARY KEY,                -- short random id
   telegram_id INTEGER NOT NULL,               -- requesting user (per-user lock)
-  url         TEXT NOT NULL,
+  url         TEXT NOT NULL,                   -- breadcrumbs for inspecting a stuck job
   youtube_id  TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'queued',  -- queued|running (deleted on finish)
-  stage       TEXT,                            -- download|transcribe|translate|tts|send
-  error       TEXT,
-  created_at  INTEGER NOT NULL,                -- unix ms
-  updated_at  INTEGER NOT NULL
+  created_at  INTEGER NOT NULL                 -- unix ms
 );
 
 CREATE TABLE processed_updates (               -- webhook idempotency
@@ -124,11 +122,11 @@ CREATE TABLE processed_updates (               -- webhook idempotency
 
 ## Failure model
 
-- **A stage fails** → job marked `failed`, user gets `❌ <reason>`, temp dir
+- **A stage fails** → the job row is deleted, user gets `❌ <reason>`, temp dir
   cleaned (mandatory). No retry, no recovery — the user resends the link.
 - **Service crashes mid-job** → in-flight jobs are lost, no notification (the
   process is dead). Acceptable by design; no durable queue, no resume on boot.
-  Any rows left `running` are stale and ignored — only a fresh request matters.
+  Any leftover rows are stale locks, cleared at the next boot.
 - **Telegram redelivers a webhook** → deduplicated via the `processed_updates`
   table (`update_id` primary key); the duplicate is dropped.
 - **Same video requested again** → fully reprocessed (no cache). The user always

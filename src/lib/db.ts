@@ -1,6 +1,8 @@
 /**
- * SQLite connection + schema bootstrap. The DB is a cache/record, never the
- * control plane (see CONVENTIONS.md). Idempotent: safe to open repeatedly.
+ * SQLite connection + schema bootstrap. Holds only ephemeral processing state:
+ * a `jobs` row exists only while a job runs and acts as that user's lock (no
+ * status/result is tracked), and `processed_updates` dedups webhook retries.
+ * Idempotent: safe to open repeatedly.
  */
 import { Database } from "bun:sqlite";
 
@@ -10,11 +12,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   telegram_id INTEGER NOT NULL,
   url         TEXT NOT NULL,
   youtube_id  TEXT NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'queued',
-  stage       TEXT,
-  error       TEXT,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
+  created_at  INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS processed_updates (

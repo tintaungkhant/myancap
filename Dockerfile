@@ -1,5 +1,10 @@
 FROM oven/bun:1-slim
 
+# Deno: yt-dlp needs a JS runtime to solve YouTube's nsig challenge. Recent
+# yt-dlp enables only "deno" by default; without it extraction fails with
+# "No supported JavaScript runtime could be found" → "video is not available".
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+
 # ffmpeg + python3 (yt-dlp is a python zipapp). yt-dlp itself is the latest
 # standalone binary — Debian's package lags and breaks on YouTube changes
 # (nsig/SABR extraction failures).

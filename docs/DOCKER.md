@@ -12,6 +12,10 @@ runtime just needs Bun, `yt-dlp`, and `ffmpeg`.
 ## Runtime image
 
 - Base: official Bun image (slim).
+- Copy the `deno` binary from `denoland/deno:bin` — recent `yt-dlp` needs a JS
+  runtime to solve YouTube's nsig challenge and enables only Deno by default.
+  Without it: "No supported JavaScript runtime could be found" → "video is not
+  available".
 - Install `ffmpeg` and `yt-dlp` (plus `python3`/`ca-certificates` as yt-dlp needs).
 - Copy the app source, `bun install --production`.
 - Set env defaults: `DATABASE_PATH`, `WORK_DIR`, `PORT`.

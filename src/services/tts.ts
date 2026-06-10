@@ -44,6 +44,30 @@ export function buildSsml(text: string, voice: string, rate?: number): string {
   return `<speak version="1.0" xml:lang="${locale}"><voice xml:lang="${locale}" name="${voice}">${body}</voice></speak>`;
 }
 
+/** One spoken segment in a batched SSML document: text preceded by a silence gap. */
+export type SsmlSegment = {
+  /** Silence (ms) to insert before this segment's speech. */
+  breakMs: number;
+  text: string;
+};
+
+/**
+ * Build a single SSML document covering many cues in one request. Each segment's
+ * speech is preceded by a `<break>` equal to its inter-cue gap, so the SRT pacing
+ * is preserved in one continuous stream. (Drift still accumulates when speech
+ * overruns its window — accepted; user retimes in the editor.)
+ */
+export function buildBatchSsml(segments: SsmlSegment[], voice: string): string {
+  const locale = voice.split("-").slice(0, 2).join("-");
+  const body = segments
+    .map((seg) => {
+      const brk = seg.breakMs > 0 ? `<break time="${Math.round(seg.breakMs)}ms"/>` : "";
+      return `${brk}${escapeXml(seg.text)}`;
+    })
+    .join("");
+  return `<speak version="1.0" xml:lang="${locale}"><voice xml:lang="${locale}" name="${voice}">${body}</voice></speak>`;
+}
+
 /**
  * Synthesize `text` to speech. Returns audio as an ArrayBuffer.
  */

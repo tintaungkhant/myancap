@@ -7,7 +7,13 @@
  * window are sped up (SSML prosody rate) to fit.
  */
 
-import { synthesizeSpeech, DEFAULT_VOICE } from "./tts";
+import {
+  synthesizeSpeech,
+  synthesizeSsml,
+  buildBatchSsml,
+  DEFAULT_VOICE,
+  type SsmlSegment,
+} from "./tts";
 import { parseSrt, type Cue } from "../lib/srt";
 
 // Re-export so existing importers of parseSrt from this module keep working.
@@ -122,6 +128,91 @@ async function synthCue(cue: Cue, voice: string, maxRate: number): Promise<Uint8
   );
 }
 
+/**
+ * Single-request path: one SSML document for all cues, one Azure call. Cheaper
+ * (1 request, no 429 risk) but the REST endpoint may truncate long synthesis —
+ * that's the known tradeoff being re-tested. Inter-cue gaps come from the SRT
+ * timestamps (clamped); drift from speech overrun is accepted.
+ */
+async function batchSynthesize(cues: Cue[], voice: string): Promise<Uint8Array> {
+  const segments: SsmlSegment[] = [];
+  let cursor = 0; // SRT timeline position, seconds
+  cues.forEach((cue) => {
+    const gap = Math.max(0, Math.min(MAX_GAP_SECONDS, cue.start - cursor));
+    segments.push({ breakMs: gap * 1000, text: cue.text });
+    cursor = cue.end;
+  });
+
+  const ssml = buildBatchSsml(segments, voice);
+  const pcm = new Uint8Array(await synthesizeSsml(ssml, PCM_FORMAT));
+  return pcm;
+}
+
+/**
+ * Group consecutive cues so each group's spoken length stays under `budgetSec`.
+ * A cue larger than the budget becomes its own group. Estimate uses the cue's
+ * SRT window (end - start) — the planned spoken length.
+ */
+export function groupCues(cues: Cue[], budgetSec: number): Cue[][] {
+  const groups: Cue[][] = [];
+  let current: Cue[] = [];
+  let acc = 0;
+  for (const cue of cues) {
+    const dur = Math.max(0, cue.end - cue.start);
+    if (current.length > 0 && acc + dur > budgetSec) {
+      groups.push(current);
+      current = [];
+      acc = 0;
+    }
+    current.push(cue);
+    acc += dur;
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
+}
+
+/**
+ * Chunked-batch path: one Azure call per GROUP of cues (not per cue). Each group
+ * is one SSML doc with internal `<break>`s for the gaps between its cues, kept
+ * short (≤ budgetSec) to dodge the REST endpoint's long-synthesis truncation.
+ * Fewer calls than per-cue; some intra-group drift if speech overruns.
+ */
+async function groupSynthesize(
+  cues: Cue[],
+  voice: string,
+  budgetSec: number,
+  concurrency: number,
+): Promise<Uint8Array> {
+  const groups = groupCues(cues, budgetSec);
+
+  // Synthesize each group concurrently (bounded). One Azure request per group.
+  const groupAudios = await mapLimit(groups, concurrency, (group) => {
+    const segments: SsmlSegment[] = group.map((cue, i) => {
+      // First cue in a group is anchored by the group's placement, so no leading
+      // break. Later cues get the in-group gap from the previous cue's end.
+      const breakMs =
+        i === 0
+          ? 0
+          : Math.max(0, Math.min(MAX_GAP_SECONDS, cue.start - group[i - 1].end)) * 1000;
+      return { breakMs, text: cue.text };
+    });
+    const ssml = buildBatchSsml(segments, voice);
+    return synthesizeSsml(ssml, PCM_FORMAT).then((buf) => new Uint8Array(buf));
+  });
+
+  // Lay the groups on the timeline by each group's first cue start.
+  const parts: Uint8Array[] = [];
+  let cursor = 0;
+  groups.forEach((group, i) => {
+    const gap = Math.max(0, Math.min(MAX_GAP_SECONDS, group[0].start - cursor));
+    if (gap > 0) parts.push(silence(gap));
+    parts.push(groupAudios[i]);
+    cursor = cursor + gap + pcmDuration(groupAudios[i].length);
+  });
+
+  return concatPcm(parts);
+}
+
 async function perCueSynthesize(
   cues: Cue[],
   voice: string,
@@ -160,6 +251,18 @@ export async function srtToSpeech(
   const maxRate = options.maxRate ?? DEFAULT_MAX_RATE;
   const concurrency = options.concurrency ?? DEFAULT_CONCURRENCY;
 
-  const pcm = await perCueSynthesize(cues, voice, maxRate, concurrency);
+  // Path selection:
+  //   TTS_BATCH=1            → single request for the whole file (truncates on long input)
+  //   TTS_GROUP_SECONDS=<n>  → one request per group of cues bounded to ~n seconds
+  //   otherwise             → one request per cue (default, safest)
+  const groupSec = Number(process.env.TTS_GROUP_SECONDS);
+  let pcm: Uint8Array;
+  if (process.env.TTS_BATCH === "1") {
+    pcm = await batchSynthesize(cues, voice);
+  } else if (Number.isFinite(groupSec) && groupSec > 0) {
+    pcm = await groupSynthesize(cues, voice, groupSec, concurrency);
+  } else {
+    pcm = await perCueSynthesize(cues, voice, maxRate, concurrency);
+  }
   return pcmToWav(pcm);
 }

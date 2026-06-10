@@ -9,7 +9,11 @@ export function buildPrompt(enSrt: string): string {
     "You are translating an English SRT subtitle file into Myanmar (Burmese).",
     "Rules:",
     "- Translate each subtitle line into natural, modern conversational Myanmar (meaning over literal).",
-    "- Keep EXACTLY the same cues as the input: the same number of blocks, the same sequence numbers, and the same `-->` timestamp lines, in the same order. Translate one Myanmar cue per English cue. Do NOT merge, split, drop, reorder, or re-time cues.",
+    "- DEFAULT to one Myanmar cue per English cue, keeping the same wording length and pacing as the original. Do not shorten or summarize.",
+    "- ONLY split a cue when the English cue is long (roughly two or more full sentences, or more than ~12 words). In that case break it at a natural sentence/clause boundary into 2-3 Myanmar cues — never into tiny fragments.",
+    "- When you split one English cue into N Myanmar cues, divide that cue's time window into N consecutive, non-overlapping sub-windows (sequential within the original cue's start/end) — one per new cue. Re-number all cues sequentially from 1 afterwards.",
+    "- Do NOT merge separate English cues together, do NOT reorder, do NOT drop or summarize content. Splitting a long cue is allowed; merging is not.",
+    "- Keep every cue's time strictly inside the original timeline: never go past the last English cue's end time.",
     "- Return ONLY the raw SRT. No markdown fences, no commentary.",
     "",
     "English SRT:",
@@ -52,8 +56,8 @@ async function translateOnce(enSrt: string): Promise<string> {
 
   const myCues = parseSrt(stripFences(text));
   if (myCues.length === 0) throw new Error("translation produced no SRT cues");
-  // Accept whatever valid cue count Gemini returns — merging short lines into
-  // natural Myanmar is expected and fine. Just keep timings sane.
+  // Accept whatever valid cue count Gemini returns — splitting long lines into
+  // several short Myanmar cues is expected and fine. Just keep timings sane.
   return serializeSrt(sanitizeTimings(myCues));
 }
 

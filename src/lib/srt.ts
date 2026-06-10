@@ -25,24 +25,29 @@ export function formatTimestamp(seconds: number): string {
   return `${p(h)}:${p(m)}:${p(s)},${p(milli, 3)}`;
 }
 
+// A cue: an index line, a "start --> end" timestamp line, then text running until
+// the next index+timestamp pair (or end of input). Tolerant of missing blank-line
+// separators between cues — LLM-produced SRT often omits them, which would
+// otherwise collapse the whole file into one giant cue.
+const CUE_RE =
+  /(\d+)[ \t]*\n[ \t]*(\d{2}:\d{2}:\d{2},\d{3})[ \t]*-->[ \t]*(\d{2}:\d{2}:\d{2},\d{3})[ \t]*\n([\s\S]*?)(?=\n[ \t]*\d+[ \t]*\n[ \t]*\d{2}:\d{2}:\d{2},\d{3}[ \t]*-->|\s*$)/g;
+
 /** Parse SRT text into cues. Skips malformed blocks. */
 export function parseSrt(srt: string): Cue[] {
-  const blocks = srt.replace(/\r/g, "").trim().split(/\n\s*\n/);
+  const clean = srt.replace(/\r/g, "");
   const cues: Cue[] = [];
 
-  for (const block of blocks) {
-    const lines = block.split("\n");
-    if (lines.length < 2) continue;
-
-    const index = Number(lines[0].trim());
-    const timeMatch = lines[1].match(
-      /(\d{2}:\d{2}:\d{2},\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2},\d{3})/,
-    );
-    if (!timeMatch) continue;
-
-    const start = parseTimestamp(timeMatch[1]);
-    const end = parseTimestamp(timeMatch[2]);
-    const text = lines.slice(2).join(" ").trim();
+  for (const m of clean.matchAll(CUE_RE)) {
+    const index = Number(m[1]);
+    const start = parseTimestamp(m[2]);
+    const end = parseTimestamp(m[3]);
+    // Collapse internal line breaks within a cue's text into single spaces.
+    const text = m[4]
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .join(" ")
+      .trim();
     if (!text) continue;
 
     cues.push({ index, start, end, text });

@@ -90,7 +90,16 @@ export async function synthesizeSsml(
       body: ssml,
     });
 
-    if (res.ok) return res.arrayBuffer();
+    if (res.ok) {
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength > 0) return buf;
+      // Empty 200 — Azure sometimes does this under load. Treat as transient.
+      if (attempt < MAX_ATTEMPTS) {
+        await Bun.sleep(500 * 2 ** (attempt - 1));
+        continue;
+      }
+      throw new Error("TTS returned empty audio after retries");
+    }
 
     const retryable = res.status === 429 || res.status === 503;
     if (retryable && attempt < MAX_ATTEMPTS) {

@@ -8,18 +8,17 @@ import { translateSrt } from "../services/translate";
 import { srtToSpeech } from "../services/srt-tts";
 import { wavToMp3, extractAudio, probeDuration } from "../services/audio";
 import {
-  sendVideo,
   sendDocument,
   sendAudio,
   sendMessage,
   getFile,
   downloadFile,
 } from "../services/telegram";
+import { uploadVideo, objectKey } from "../services/r2";
 import { slugify } from "../lib/slug";
 import { deleteJob } from "../services/store";
 import { cleanupJobDir, type Job } from "./job";
 
-const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
 const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024; // Telegram Bot API getFile cap
 
 /**
@@ -37,7 +36,7 @@ export type RunDeps = {
   translateSrt: typeof translateSrt;
   srtToSpeech: typeof srtToSpeech;
   wavToMp3: typeof wavToMp3;
-  sendVideo: typeof sendVideo;
+  uploadVideo: typeof uploadVideo;
   sendDocument: typeof sendDocument;
   sendAudio: typeof sendAudio;
   sendMessage: typeof sendMessage;
@@ -54,7 +53,7 @@ const defaultDeps: RunDeps = {
   translateSrt,
   srtToSpeech,
   wavToMp3,
-  sendVideo,
+  uploadVideo,
   sendDocument,
   sendAudio,
   sendMessage,
@@ -142,19 +141,23 @@ export async function runJob(
       console.error(`job ${job.id}: ${label} gave up`);
     };
 
-    // The video may exceed Telegram's 50 MB upload cap. Check the size without
-    // reading the file; if it fits, load the bytes and send. Skip-with-warning
-    // beats nothing — the subtitles + dub still go out below.
-    const videoFile = Bun.file(videoPath);
-    if (!sendVideoBack) {
-      // Video-message job: the user already has the source video; nothing to send back.
-    } else if (videoFile.size > VIDEO_MAX_BYTES) {
+    // YouTube jobs: upload the (now up-to-1080p) video to R2 and reply with the
+    // public link instead of pushing the file through Telegram. Retried like the
+    // other uploads; if it gives up, warn and still deliver the SRTs + dub below.
+    // Video-message jobs send nothing here — the user already has the video.
+    if (sendVideoBack) {
+      let videoUrl: string | null = null;
+      await send("uploadVideo", async () => {
+        videoUrl = await deps.uploadVideo(videoPath, objectKey(base, job.id, cfg.r2KeyPrefix));
+      });
       await deps
-        .sendMessage(job.chatId, "⚠️ video ကြီးလွန်းလို့ မပို့နိုင်ပါ — စာတန်းနဲ့ မြန်မာသံ ဖိုင်တွေပဲ ပို့ပါမယ်")
+        .sendMessage(
+          job.chatId,
+          videoUrl
+            ? `🎬 video: ${videoUrl}`
+            : "⚠️ video link မရပါ — စာတန်းနဲ့ မြန်မာသံ ဖိုင်တွေပဲ ပို့ပါမယ်",
+        )
         .catch(() => {});
-    } else {
-      const videoBytes = new Uint8Array(await videoFile.arrayBuffer());
-      await send("sendVideo", () => deps.sendVideo(job.chatId, videoBytes, `${base}.mp4`));
     }
     await send("sendMy", () =>
       deps.sendDocument(job.chatId, new TextEncoder().encode(mySrt), `${base}.my.srt`, "application/x-subrip"),

@@ -17,6 +17,12 @@ export type Config = {
   azureTtsMaxConcurrency: number;
   ytdlpCookies?: string;
   ytdlpPlayerClient?: string;
+  r2Endpoint: string;
+  r2AccessKeyId: string;
+  r2SecretAccessKey: string;
+  r2Bucket: string;
+  r2PublicBaseUrl: string;
+  r2KeyPrefix: string;
   databasePath: string;
   workDir: string;
   maxConcurrentJobs: number;
@@ -92,11 +98,17 @@ export function loadConfig(env: Env = process.env): Config {
     azureTtsMaxConcurrency: posInt(env, "AZURE_TTS_MAX_CONCURRENCY", 8, errors),
     ytdlpCookies: env.YTDLP_COOKIES,
     ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
+    r2Endpoint: req(env, "AWS_ENDPOINT", missing),
+    r2AccessKeyId: req(env, "AWS_ACCESS_KEY_ID", missing),
+    r2SecretAccessKey: req(env, "AWS_SECRET_ACCESS_KEY", missing),
+    r2Bucket: req(env, "AWS_BUCKET", missing),
+    r2PublicBaseUrl: req(env, "AWS_URL", missing),
+    r2KeyPrefix: env.AWS_KEY_PREFIX || "",
     databasePath: env.DATABASE_PATH || "/data/myancap.db",
     workDir: env.WORK_DIR || "/tmp/myancap",
     maxConcurrentJobs: posInt(env, "MAX_CONCURRENT_JOBS", 1, errors),
     maxVideoSeconds: posInt(env, "MAX_VIDEO_SECONDS", 900, errors),
-    maxVideoHeight: posInt(env, "MAX_VIDEO_HEIGHT", 480, errors),
+    maxVideoHeight: posInt(env, "MAX_VIDEO_HEIGHT", 1080, errors),
     port: posInt(env, "PORT", 3000, errors),
   };
 

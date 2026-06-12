@@ -8,6 +8,11 @@ function setEnv() {
   process.env.OPENAI_API_KEY = "sk-test";
   process.env.GEMINI_API_KEY = "g";
   process.env.AZURE_SPEECH_KEY = "a";
+  process.env.AWS_ENDPOINT = "https://acc.r2.cloudflarestorage.com";
+  process.env.AWS_ACCESS_KEY_ID = "rk";
+  process.env.AWS_SECRET_ACCESS_KEY = "rs";
+  process.env.AWS_BUCKET = "vids";
+  process.env.AWS_URL = "https://media.example.com";
 }
 
 test("posts to OpenAI with auth header and returns the srt body", async () => {

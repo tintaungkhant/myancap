@@ -7,6 +7,11 @@ process.env.TELEGRAM_BOT_TOKEN = "t";
 process.env.OPENAI_API_KEY = "o";
 process.env.GEMINI_API_KEY = "g";
 process.env.AZURE_SPEECH_KEY = "a";
+process.env.AWS_ENDPOINT = "https://acc.r2.cloudflarestorage.com";
+process.env.AWS_ACCESS_KEY_ID = "rk";
+process.env.AWS_SECRET_ACCESS_KEY = "rs";
+process.env.AWS_BUCKET = "vids";
+process.env.AWS_URL = "https://media.example.com";
 
 import { openDb } from "../lib/db";
 import { insertJob, hasActiveJob } from "../services/store";
@@ -30,7 +35,7 @@ function makeDeps(sent: string[]): RunDeps {
     translateSrt: async () => "1\n00:00:01,000 --> 00:00:02,000\nმინ\n",
     srtToSpeech: async () => new Uint8Array([1, 2, 3]),
     wavToMp3: async (_i: string, o: string) => { await Bun.write(o, "MP3"); },
-    sendVideo: async () => { sent.push("video"); return "VF"; },
+    uploadVideo: async () => { sent.push("upload"); return "https://media.example.com/v.mp4"; },
     sendDocument: async (_c: number, _b: Uint8Array, fn: string) => {
       sent.push(fn.includes(".en.") ? "en" : "my");
       return "DF";
@@ -43,7 +48,7 @@ function makeDeps(sent: string[]): RunDeps {
 const ytSource = { kind: "youtube", url: "u", youtubeId: "ytid" } as const;
 const tgSource = { kind: "telegram_video", fileId: "FID" } as const;
 
-test("youtube happy path: sends 4 files, clears job, cleans dir", async () => {
+test("youtube happy path: uploads video + sends 3 files, clears job, cleans dir", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run1");
@@ -53,7 +58,7 @@ test("youtube happy path: sends 4 files, clears job, cleans dir", async () => {
   const job: Job = { id: "run1", telegramId: 5, chatId: 5, dir, source: ytSource };
   await runJob(db, job, makeDeps(sent));
 
-  expect(sent).toEqual(["video", "my", "en", "audio"]);
+  expect(sent).toEqual(["upload", "my", "en", "audio"]);
   // Ephemeral: job row deleted (lock released), temp dir gone, nothing cached.
   expect(hasActiveJob(db, 5)).toBe(false);
   const jobRows = db.query("SELECT COUNT(*) AS n FROM jobs").get() as any;
@@ -100,7 +105,7 @@ test("telegram_video oversize: rejects, sends nothing, cleans dir", async () => 
   db.close();
 });
 
-test("youtube oversized video file: skips video, warns, still sends srt + audio", async () => {
+test("youtube upload failure: warns, still sends 3 files", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run3");
@@ -109,17 +114,14 @@ test("youtube oversized video file: skips video, warns, still sends srt + audio"
   const sent: string[] = [];
   const msgs: string[] = [];
   const deps = makeDeps(sent);
-  deps.download = async (_u: string, d: string) => {
-    await Bun.write(`${d}/video.mp4`, new Uint8Array(51 * 1024 * 1024)); // >50 MB
-    return { videoPath: `${d}/video.mp4` };
-  };
+  deps.uploadVideo = async () => { throw new Error("r2 boom"); };
   deps.sendMessage = async (_c: number, m: string) => { msgs.push(m); };
 
   const job: Job = { id: "run3", telegramId: 7, chatId: 7, dir, source: ytSource };
   await runJob(db, job, deps);
 
-  expect(sent).toEqual(["my", "en", "audio"]); // video skipped
-  expect(msgs.some((m) => m.includes("ကြီးလွန်း"))).toBe(true);
+  expect(sent).toEqual(["my", "en", "audio"]); // no upload success
+  expect(msgs.some((m) => m.includes("video link မရပါ"))).toBe(true);
   expect(existsSync(dir)).toBe(false);
   db.close();
 });

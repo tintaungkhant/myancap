@@ -5,6 +5,11 @@ process.env.TELEGRAM_BOT_TOKEN = "t";
 process.env.OPENAI_API_KEY = "o";
 process.env.GEMINI_API_KEY = "g";
 process.env.AZURE_SPEECH_KEY = "a";
+process.env.AWS_ENDPOINT = "https://acc.r2.cloudflarestorage.com";
+process.env.AWS_ACCESS_KEY_ID = "rk";
+process.env.AWS_SECRET_ACCESS_KEY = "rs";
+process.env.AWS_BUCKET = "vids";
+process.env.AWS_URL = "https://media.example.com";
 
 import { openDb } from "../lib/db";
 import { Semaphore } from "../lib/semaphore";

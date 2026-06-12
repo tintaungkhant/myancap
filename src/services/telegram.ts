@@ -27,32 +27,11 @@ export async function sendMessage(chatId: number, text: string): Promise<void> {
   }
 }
 
-/** Extract the file_id from a sendVideo/sendAudio/sendDocument response. */
-function fileIdFrom(result: any, key: "video" | "audio" | "document"): string {
+/** Extract the file_id from a sendAudio/sendDocument response. */
+function fileIdFrom(result: any, key: "audio" | "document"): string {
   const id = result?.result?.[key]?.file_id;
   if (typeof id !== "string") throw new Error(`Telegram ${key}: no file_id in response`);
   return id;
-}
-
-/** Send an MP4 video. Returns its file_id. */
-export async function sendVideo(
-  chatId: number,
-  mp4: Uint8Array,
-  filename = "video.mp4"
-): Promise<string> {
-  const form = new FormData();
-  form.append("chat_id", String(chatId));
-  form.append(
-    "video",
-    new Blob([mp4.buffer as ArrayBuffer], { type: "video/mp4" }),
-    filename
-  );
-
-  const res = await fetch(apiUrl("sendVideo"), { method: "POST", body: form });
-  if (!res.ok) {
-    throw new Error(`sendVideo failed: ${res.status} ${await res.text()}`);
-  }
-  return fileIdFrom(await res.json(), "video");
 }
 
 /** Send an audio file. Returns its file_id. */

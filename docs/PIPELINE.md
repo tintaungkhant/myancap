@@ -2,11 +2,16 @@
 
 One job has one of two sources:
 
-- a **YouTube link** → four delivered files (original video, English subtitles,
-  Myanmar subtitles, Myanmar voice-over mp3); or
+- a **YouTube link** → three delivered files (English subtitles, Myanmar
+  subtitles, Myanmar voice-over mp3) **plus a public R2 link** to the downloaded
+  video (uploaded to Cloudflare R2, not pushed through Telegram). The video is
+  downloaded at up to **1080p** (the old 480p cap existed only to fit Telegram's
+  50 MB upload limit, which R2 removes). The per-job **duration limit still
+  applies**; or
 - a **Telegram video message** (native `video` or a `video/*` document) → three
   files (English subtitles, Myanmar subtitles, Myanmar voice-over mp3). The
-  video itself is **not** sent back — the user already has it.
+  video itself is **not** sent back and **not** uploaded to R2 — the user already
+  has it.
 
 Each stage takes files/strings from the previous stage and writes into the job's
 temp directory. **There is no muxing stage.**
@@ -86,10 +91,10 @@ For the YouTube path it is **one** network fetch — the video — then audio is
 pulled from it locally:
 
 ```bash
-# video — prefer H.264 (avc1) + AAC, capped at <=MAX_VIDEO_HEIGHT (default 480p),
-# never fall back to audio-only. avc1 because Telegram renders VP9/AV1 as a black
-# screen; the height cap keeps files small (vs the 50 MB upload limit).
-yt-dlp -f 'bv*[vcodec^=avc1][height<=480]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1][height<=480]/bv*[ext=mp4][height<=480]+ba/b[height<=480][vcodec!=none]/b[vcodec!=none]' \
+# video — prefer H.264 (avc1) + AAC, capped at <=MAX_VIDEO_HEIGHT (default 1080p),
+# never fall back to audio-only. avc1 for broad player/CapCut compatibility (VP9/
+# AV1 choke some players); the height cap bounds file size + download time.
+yt-dlp -f 'bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1][height<=1080]/bv*[ext=mp4][height<=1080]+ba/b[height<=1080][vcodec!=none]/b[vcodec!=none]' \
        --merge-output-format mp4 -o "<dir>/video.%(ext)s" <url>
 
 # audio for transcription — extracted from the mp4 we just downloaded (the mp4
@@ -207,29 +212,45 @@ body under load, which would drop that cue) with backoff, up to 5 attempts.
 
 ---
 
-## 6. Egress — Telegram (four files, or three for video messages)
+## 6. Video upload — Cloudflare R2 (YouTube jobs only)
+
+**File:** `services/r2.ts`
+**In:** `video.mp4`, slug base, `job.id`  **Out:** a public URL
+
+For a **youtube** job, the downloaded `video.mp4` is uploaded to R2 (S3 API,
+SigV4 signed with `aws4fetch`) under the key `<prefix><slug>-<jobId>.mp4` and the
+public URL `<AWS_URL>/<key>` is returned. A `telegram_video` job skips
+this entirely.
+
+- The file is **streamed** (`body: Bun.file(path).stream()`) with
+  `x-amz-content-sha256: UNSIGNED-PAYLOAD` and a real `Content-Length`, so a large
+  1080p clip is never buffered into memory.
+- The upload runs inside the same **3× retry** wrapper as the file deliveries. If
+  it gives up, the user gets a warning and still receives the SRTs + mp3.
+- **Object expiry is an R2 bucket lifecycle rule** (configured in the Cloudflare
+  dashboard, scoped to `AWS_KEY_PREFIX`), not app code — the pipeline stores
+  nothing and tracks no objects, consistent with the no-cache design.
+
+---
+
+## 7. Egress — Telegram (link + three files, or three files for video messages)
 
 **File:** `services/telegram.ts`
-**In:** `video.mp4`, `en.srt`, `my.srt`, `dub.mp3`  **Out:** four messages
-(youtube) or three (telegram_video) to the user
+**In:** R2 link (youtube), `en.srt`, `my.srt`, `dub.mp3`  **Out:** the messages
 
-No mux — the user receives the parts and combines them as they like. All share a
-**base name** (see *Filenames*), so they group in the chat:
+No mux — the user receives the parts and combines them as they like. The files
+share a **base name** (see *Filenames*), so they group in the chat:
 
 - Send, in order:
-  1. `<slug>.mp4` via `sendVideo` — **youtube source only**; a `telegram_video`
-     job skips this (the user already has the video).
+  1. **youtube only:** a text message `🎬 video: <R2 public link>` (or a warning if
+     the upload failed). A `telegram_video` job sends nothing here.
   2. `<slug>.my.srt` via `sendDocument` (mime `application/x-subrip`).
   3. `<slug>.en.srt` via `sendDocument`.
   4. `<slug>.mp3` via `sendAudio` (Telegram's native audio = inline player); on
      rejection, falls back to `sendDocument`.
-- **Each upload is independent and retried 3×.** Telegram occasionally drops the
-  socket mid-upload (`ECONNRESET`); a failure on one file must not abort the job
-  or block the others. Failures are logged, not fatal.
-- **Oversized video (>50 MB):** Telegram's per-file bot upload cap. If `video.mp4`
-  exceeds it (youtube path only), **skip the video with a warning** and still send
-  the SRTs + mp3 — a partial result beats nothing. (The 480p cap from stage 2
-  makes this rare.)
+- **Each step is independent and retried 3×.** Telegram occasionally drops the
+  socket mid-upload (`ECONNRESET`); a failure on one must not abort the job or
+  block the others. Failures are logged, not fatal.
 - The `file_id`s Telegram returns are **not stored** — there is no cache.
 - In a `finally` (success or failure), **wipe all state for the job**: delete the
   `jobs` row (releasing the per-user lock) and remove the temp dir. Mandatory.

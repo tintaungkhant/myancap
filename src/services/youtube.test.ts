@@ -40,4 +40,5 @@ test("arg builders include the key flags", () => {
   expect(videoArgs("URL", "/d", 480)).toContain("--merge-output-format");
   expect(videoArgs("URL", "/d", 480)).toContain("/d/video.%(ext)s");
   expect(videoArgs("URL", "/d", 480).join(" ")).toContain("height<=480");
+  expect(videoArgs("URL", "/d", 1080).join(" ")).toContain("height<=1080");
 });

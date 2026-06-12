@@ -34,9 +34,15 @@ cp .env.example .env
 | `TTS_CONCURRENCY`         | no       | `3`                     | Max parallel TTS calls (lower if 429)|
 | `TTS_GROUP_SECONDS`       | no       | `0`                     | Batch cues per ~N s/call; 0 = per-cue|
 | `AZURE_TTS_MAX_CONCURRENCY`| no      | `8`                     | Global cap on concurrent Azure calls |
-| `MAX_VIDEO_HEIGHT`        | no       | `480`                   | Cap downloaded video resolution      |
+| `MAX_VIDEO_HEIGHT`        | no       | `1080`                  | Cap downloaded video resolution      |
 | `YTDLP_COOKIES`           | no       | —                       | Path to cookies.txt (bot-check)      |
 | `YTDLP_PLAYER_CLIENT`     | no       | —                       | yt-dlp player client (e.g. `tv`)     |
+| `AWS_ENDPOINT`            | yes      | —                       | `https://<account>.r2.cloudflarestorage.com` |
+| `AWS_ACCESS_KEY_ID`       | yes      | —                       | R2 S3 API access key id              |
+| `AWS_SECRET_ACCESS_KEY`   | yes      | —                       | R2 S3 API secret                     |
+| `AWS_BUCKET`              | yes      | —                       | R2 bucket for uploaded videos        |
+| `AWS_URL`                 | yes      | —                       | Public base URL, no trailing slash (r2.dev or custom domain) |
+| `AWS_KEY_PREFIX`          | no       | `` (empty)              | Key prefix for uploads (e.g. `videos/`) |
 | `DATABASE_PATH`           | no       | `/data/myancap.db`      | SQLite file (volume optional)        |
 | `WORK_DIR`                | no       | `/tmp/myancap`          | Per-job temp directory root          |
 | `MAX_CONCURRENT_JOBS`     | no       | `1`                     | In-process job concurrency cap       |
@@ -46,6 +52,25 @@ cp .env.example .env
 > `DATABASE_PATH` holds only the webhook dedup set + in-flight job locks (no
 > result cache), so a mounted volume is **optional**. See
 > [DOCKER.md](DOCKER.md#data-volume).
+
+### Cloudflare R2
+
+YouTube videos are uploaded to R2 and delivered as a public link (video-message
+jobs never touch R2). To set it up:
+
+1. **Create a bucket** in the Cloudflare dashboard → R2. Use its name for
+   `AWS_BUCKET`.
+2. **Create an S3 API token** (R2 → Manage R2 API Tokens → Create, "Object Read &
+   Write"). The token gives an Access Key ID and Secret → `AWS_ACCESS_KEY_ID` /
+   `AWS_SECRET_ACCESS_KEY`. The token page also shows the S3 endpoint
+   `https://<account_id>.r2.cloudflarestorage.com` → `AWS_ENDPOINT`.
+3. **Enable public access** so the returned links resolve: either turn on the
+   bucket's **r2.dev public URL**, or connect a **custom domain**. Use that origin
+   (no trailing slash) for `AWS_URL` — e.g. `https://pub-xxxx.r2.dev`
+   or `https://media.example.com`.
+4. **Add a lifecycle rule** to auto-delete old objects (the app never deletes):
+   bucket → Settings → Object lifecycle rules → e.g. "delete objects N days after
+   upload", scoped to `AWS_KEY_PREFIX` if set. This is the only cleanup mechanism.
 
 ## Run
 

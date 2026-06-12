@@ -8,12 +8,15 @@ Guidance for Claude Code (and humans) working in this repo.
 English source video to a Telegram bot and gets back the localized parts. Two
 inputs are accepted:
 
-- a **YouTube link** → four files: the original video, English subtitles,
-  Myanmar subtitles, and a timed Myanmar voice-over.
+- a **YouTube link** → three files (English subtitles, Myanmar subtitles, a timed
+  Myanmar voice-over) **plus a public link** to the downloaded video, which is
+  uploaded to Cloudflare R2 instead of pushed through Telegram. Hosting the video
+  on R2 removes Telegram's 50 MB upload cap, so quality is no longer pinned to
+  480p (now up to 1080p).
 - a **video message** (native `video` or a `video/*` document) → three files:
-  English subtitles, Myanmar subtitles, and the Myanmar voice-over. The video is
-  **not** sent back (the user already has it). Capped at Telegram's 20 MB
-  Bot-API download limit.
+  English subtitles, Myanmar subtitles, and the Myanmar voice-over. No video and
+  no R2 upload (the user already has it). Capped at Telegram's 20 MB Bot-API
+  download limit.
 
 **The bot does not mux them** — the user combines what they want, in whatever
 player (e.g. CapCut).
@@ -22,17 +25,18 @@ Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 `whisper-1` API. Translation uses Google Gemini. Speech uses Azure Neural TTS.
 `yt-dlp` and `ffmpeg` do the media work.
 
-## The pipeline (6 stages)
+## The pipeline (7 stages; R2 upload is YouTube-only)
 
 ```
 Telegram (YT link OR video message)
-  → acquire       YT link → yt-dlp download video.mp4 (avc1 ≤480p)
+  → acquire       YT link → yt-dlp download video.mp4 (avc1 ≤1080p)
                   video message → Telegram getFile + download video.mp4 (≤20 MB)
   → ffmpeg        video.mp4 → audio.mp3             (mono, extracted locally)
   → whisper-1     audio.mp3 → English .srt          (OpenAI API, timestamped)
   → Gemini 2.5 Flash  EN .srt → Myanmar .srt       (translate, 1:1 cues)
   → Azure TTS     MY .srt → timed MP3 voice-over    (per-cue, constant speed)
-  → Telegram      send en.srt + my.srt + dub.mp3 (+ video.mp4 for YT links)
+  → R2 (YT only)  upload video.mp4 → public link    (S3 API, streamed PUT)
+  → Telegram      send en.srt + my.srt + dub.mp3 (+ R2 link for YT links)
 ```
 
 No muxing step. Full detail: [docs/PIPELINE.md](docs/PIPELINE.md).
@@ -49,6 +53,7 @@ No muxing step. Full detail: [docs/PIPELINE.md](docs/PIPELINE.md).
 | Translation    | Google Gemini `gemini-2.5-flash` (REST)   |
 | TTS            | Azure Neural TTS `my-MM-ThihaNeural` (REST)|
 | Media          | `ffmpeg` (CLI — extract + WAV→MP3)        |
+| Video hosting  | Cloudflare R2 (S3 API via `aws4fetch` SigV4)|
 | Delivery       | Telegram Bot API (REST)                    |
 | Storage        | SQLite via `bun:sqlite` (built-in)        |
 | Packaging      | Single-stage Dockerfile                    |
@@ -79,6 +84,7 @@ src/
     srt-tts.ts             SRT → timed WAV (per-cue or grouped, gap-clamped)
     audio.ts               ffmpeg: extractAudio() (mp4→mp3) + wavToMp3()
                            + probeDuration() (ffprobe, for video-message jobs)
+    r2.ts                  Cloudflare R2 upload (aws4fetch SigV4) → public URL
     telegram.ts            Telegram Bot API client (send + file_id;
                            getFile/downloadFile to fetch incoming videos)
     store.ts               DB queries: job lifecycle + webhook dedup
@@ -105,7 +111,7 @@ Full rationale: [docs/STRUCTURE.md](docs/STRUCTURE.md).
 
 ## Status
 
-The full pipeline is **implemented and running** (all 6 stages, ingress gates,
+The full pipeline is **implemented and running** (all 7 stages, ingress gates,
 Docker). Notable hardening learned from production runs:
 
 - **TTS robustness** — per-cue Azure synthesis (or grouped via
@@ -120,9 +126,13 @@ Docker). Notable hardening learned from production runs:
 - **Audio format = MP3** (not aac/m4a) — raw ADTS `.aac` is headerless, so players
   mis-estimate its duration and cut off at long silences; mp3 carries real
   duration metadata.
-- **Resilient delivery** — each of the 4 uploads is independent and retried 3×, so
-  a dropped socket on one file doesn't abort the job.
-- **Oversized video** (>50 MB) → skipped with a warning; subtitles + dub still sent.
+- **Resilient delivery** — each delivery step (R2 upload + the file uploads) is
+  independent and retried 3×, so a dropped socket on one doesn't abort the job.
+- **Video on R2, not Telegram** — YouTube video is streamed to R2 (S3 API,
+  SigV4 via `aws4fetch`) and delivered as a public link, lifting the 50 MB
+  Telegram cap and the 480p quality limit (now ≤1080p). If the upload fails after
+  retries, the user gets a warning and still receives the subtitles + dub. Object
+  expiry is an **R2 bucket lifecycle rule** (ops), so the app stores nothing.
 - **Translation** — Gemini is asked for strict 1:1 cues (no merge/re-time), but
   validation is lenient (won't hard-fail on a count mismatch).
 

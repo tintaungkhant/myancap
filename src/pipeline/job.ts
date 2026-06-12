@@ -3,13 +3,15 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { getConfig } from "../config";
 
+export type YoutubeSource = { kind: "youtube"; url: string; youtubeId: string };
+export type TelegramVideoSource = { kind: "telegram_video"; fileId: string };
+
 export type Job = {
   id: string;
   telegramId: number;
   chatId: number;
-  url: string;
-  youtubeId: string;
   dir: string;
+  source: YoutubeSource | TelegramVideoSource;
 };
 
 export function newJobId(): string {

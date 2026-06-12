@@ -6,18 +6,21 @@ import * as youtube from "../services/youtube";
 import { transcribe } from "../services/transcribe";
 import { translateSrt } from "../services/translate";
 import { srtToSpeech } from "../services/srt-tts";
-import { wavToMp3, extractAudio } from "../services/audio";
+import { wavToMp3, extractAudio, probeDuration } from "../services/audio";
 import {
   sendVideo,
   sendDocument,
   sendAudio,
   sendMessage,
+  getFile,
+  downloadFile,
 } from "../services/telegram";
 import { slugify } from "../lib/slug";
 import { deleteJob } from "../services/store";
 import { cleanupJobDir, type Job } from "./job";
 
 const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
+const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024; // Telegram Bot API getFile cap
 
 /**
  * Injectable service surface — defaults wire the real services. Tests pass
@@ -26,6 +29,9 @@ const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
 export type RunDeps = {
   probe: typeof youtube.probe;
   download: typeof youtube.download;
+  getFile: typeof getFile;
+  downloadFile: typeof downloadFile;
+  probeDuration: typeof probeDuration;
   extractAudio: typeof extractAudio;
   transcribe: typeof transcribe;
   translateSrt: typeof translateSrt;
@@ -40,6 +46,9 @@ export type RunDeps = {
 const defaultDeps: RunDeps = {
   probe: youtube.probe,
   download: youtube.download,
+  getFile,
+  downloadFile,
+  probeDuration,
   extractAudio,
   transcribe,
   translateSrt,
@@ -65,13 +74,35 @@ export async function runJob(
   };
 
   try {
+    const videoPath = join(job.dir, "video.mp4");
+    let base: string;
+    let sendVideoBack: boolean;
+
     stage("⬇️ video download နေသည်");
-    const meta = await deps.probe(job.url);
-    if (meta.durationSeconds > cfg.maxVideoSeconds) {
-      const max = Math.round(cfg.maxVideoSeconds / 60);
-      throw new Error(`Video too long (max ${max} min)`);
+    if (job.source.kind === "youtube") {
+      const meta = await deps.probe(job.source.url);
+      if (meta.durationSeconds > cfg.maxVideoSeconds) {
+        const max = Math.round(cfg.maxVideoSeconds / 60);
+        throw new Error(`Video too long (max ${max} min)`);
+      }
+      await deps.download(job.source.url, job.dir);
+      base = slugify(meta.title, job.source.youtubeId);
+      sendVideoBack = true;
+    } else {
+      const file = await deps.getFile(job.source.fileId);
+      if (file.fileSize !== undefined && file.fileSize > DOWNLOAD_MAX_BYTES) {
+        throw new Error("Video too big (max 20 MB)");
+      }
+      await deps.downloadFile(file.filePath, videoPath);
+      const durationSeconds = await deps.probeDuration(videoPath);
+      if (durationSeconds > cfg.maxVideoSeconds) {
+        const max = Math.round(cfg.maxVideoSeconds / 60);
+        throw new Error(`Video too long (max ${max} min)`);
+      }
+      base = `video_${job.id}`;
+      sendVideoBack = false;
     }
-    const { videoPath } = await deps.download(job.url, job.dir);
+
     const audioPath = join(job.dir, "audio.mp3");
     await deps.extractAudio(videoPath, audioPath);
 
@@ -94,7 +125,6 @@ export async function runJob(
     await deps.wavToMp3(wavPath, mp3Path);
 
     stage("📤 file တွေပို့နေသည်");
-    const base = slugify(meta.title, job.youtubeId);
 
     // Each upload is independent and retried — a dropped socket on one file
     // (Telegram occasionally closes the connection mid-upload) must not abort
@@ -116,7 +146,9 @@ export async function runJob(
     // reading the file; if it fits, load the bytes and send. Skip-with-warning
     // beats nothing — the subtitles + dub still go out below.
     const videoFile = Bun.file(videoPath);
-    if (videoFile.size > VIDEO_MAX_BYTES) {
+    if (!sendVideoBack) {
+      // Video-message job: the user already has the source video; nothing to send back.
+    } else if (videoFile.size > VIDEO_MAX_BYTES) {
       await deps
         .sendMessage(job.chatId, "⚠️ video ကြီးလွန်းလို့ မပို့နိုင်ပါ — စာတန်းနဲ့ မြန်မာသံ ဖိုင်တွေပဲ ပို့ပါမယ်")
         .catch(() => {});

@@ -14,7 +14,13 @@ import { runJob } from "../pipeline/run";
 
 type Update = {
   update_id?: number;
-  message?: { chat: { id: number }; from?: { id: number }; text?: string };
+  message?: {
+    chat: { id: number };
+    from?: { id: number };
+    text?: string;
+    video?: { file_id: string; file_size?: number };
+    document?: { file_id: string; file_size?: number; mime_type?: string };
+  };
 };
 
 /**
@@ -46,7 +52,7 @@ export async function handleUpdate(
   deps: WebhookDeps = defaultDeps,
 ): Promise<void> {
   const msg = update.message;
-  if (!msg?.text) return;
+  if (!msg) return;
 
   const chatId = msg.chat.id;
   const telegramId = msg.from?.id ?? chatId;
@@ -57,10 +63,18 @@ export async function handleUpdate(
     return;
   }
 
-  // Gate 2: must be a YouTube link.
-  const youtubeId = extractYouTubeId(msg.text);
-  if (!youtubeId) {
-    await deps.sendMessage(chatId, "❌ YouTube link ပို့ပါ").catch(() => {});
+  // Gate 2: classify the source — a YouTube link, a native video, or a video/* document.
+  let source: Job["source"] | null = null;
+  const youtubeId = msg.text ? extractYouTubeId(msg.text) : null;
+  if (youtubeId) {
+    source = { kind: "youtube", url: `https://www.youtube.com/watch?v=${youtubeId}`, youtubeId };
+  } else if (msg.video) {
+    source = { kind: "telegram_video", fileId: msg.video.file_id };
+  } else if (msg.document?.mime_type?.startsWith("video/")) {
+    source = { kind: "telegram_video", fileId: msg.document.file_id };
+  }
+  if (!source) {
+    await deps.sendMessage(chatId, "❌ YouTube link (သို့) video ပို့ပါ").catch(() => {});
     return;
   }
 
@@ -73,11 +87,10 @@ export async function handleUpdate(
 
   // Enqueue.
   const id = newJobId();
-  const url = `https://www.youtube.com/watch?v=${youtubeId}`;
-  insertJob(db, { id, telegramId, url, youtubeId, now });
+  insertJob(db, { id, telegramId, now });
   const dir = await createJobDir(id);
   await deps.sendMessage(chatId, "🎬 လုပ်ဆောင်နေသည်").catch(() => {});
 
-  const job: Job = { id, telegramId, chatId, url, youtubeId, dir };
+  const job: Job = { id, telegramId, chatId, dir, source };
   void sem.run(() => deps.runJob(db, job));
 }

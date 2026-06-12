@@ -14,8 +14,6 @@ DROP TABLE IF EXISTS jobs;
 CREATE TABLE jobs (
   id          TEXT PRIMARY KEY,
   telegram_id INTEGER NOT NULL,
-  url         TEXT NOT NULL,
-  youtube_id  TEXT NOT NULL,
   created_at  INTEGER NOT NULL
 );
 

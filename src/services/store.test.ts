@@ -15,7 +15,7 @@ function freshDb() {
 
 test("insertJob then hasActiveJob is true; deleteJob clears it", () => {
   const db = freshDb();
-  insertJob(db, { id: "j1", telegramId: 42, url: "u", youtubeId: "yt", now });
+  insertJob(db, { id: "j1", telegramId: 42, now });
   expect(hasActiveJob(db, 42)).toBe(true);
   deleteJob(db, "j1");
   expect(hasActiveJob(db, 42)).toBe(false);
@@ -24,7 +24,7 @@ test("insertJob then hasActiveJob is true; deleteJob clears it", () => {
 
 test("hasActiveJob is per-user", () => {
   const db = freshDb();
-  insertJob(db, { id: "j1", telegramId: 42, url: "u", youtubeId: "yt", now });
+  insertJob(db, { id: "j1", telegramId: 42, now });
   expect(hasActiveJob(db, 99)).toBe(false);
   db.close();
 });

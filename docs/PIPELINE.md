@@ -1,27 +1,35 @@
 # Pipeline stages
 
-One job = one YouTube link → four delivered files (original video, English
-subtitles, Myanmar subtitles, Myanmar voice-over mp3). Each stage takes
-files/strings from the previous stage and writes into the job's temp directory.
-**There is no muxing stage.**
+One job has one of two sources:
+
+- a **YouTube link** → four delivered files (original video, English subtitles,
+  Myanmar subtitles, Myanmar voice-over mp3); or
+- a **Telegram video message** (native `video` or a `video/*` document) → three
+  files (English subtitles, Myanmar subtitles, Myanmar voice-over mp3). The
+  video itself is **not** sent back — the user already has it.
+
+Each stage takes files/strings from the previous stage and writes into the job's
+temp directory. **There is no muxing stage.**
 
 `Job` context (see `pipeline/job.ts`):
 
 ```ts
+type YoutubeSource = { kind: "youtube"; url: string; youtubeId: string };
+type TelegramVideoSource = { kind: "telegram_video"; fileId: string };
+
 type Job = {
   id: string;          // short random id, used in temp paths + logs
   telegramId: number;  // user — for the per-user active-job check
   chatId: number;      // Telegram chat to reply to
-  url: string;         // validated YouTube URL
-  youtubeId: string;   // extracted id
   dir: string;         // WORK_DIR/<id> — deleted in finally
+  source: YoutubeSource | TelegramVideoSource;
 };
 ```
 
-The matching `jobs` row carries only `id`, `telegram_id`, `url`, `youtube_id`,
-and `created_at`; its **mere existence is the per-user lock**. No status/stage
-is tracked — the pipeline runs in memory and the row is deleted when the job
-finishes. The in-memory `Job` threads file paths. There is no result cache.
+The matching `jobs` row carries only `id`, `telegram_id`, and `created_at`; its
+**mere existence is the per-user lock**. No status/stage is tracked — the
+pipeline runs in memory and the row is deleted when the job finishes. The
+in-memory `Job` threads the source + file paths. There is no result cache.
 
 ---
 
@@ -35,11 +43,15 @@ Gates run in this order; the first that fires short-circuits:
 1. **Verify** the secret header (`verifySecret`).
 2. **Dedup** the update: if `update_id` is already in `processed_updates`, drop
    it (Telegram retry). Otherwise record it.
-3. **Parse** the first YouTube URL from `message.text`. Accept `youtube.com/watch`,
-   `youtu.be/<id>`, `youtube.com/shorts/<id>`. Anything else — non-URL, or a
-   non-YouTube host (also the SSRF guard) — gets a single plain **reject message**
-   (`❌ YouTube link ပို့ပါ`) and stops. No commands, no `/start`, no help menu —
-   Telegram UX is deliberately minimal.
+3. **Classify** the source, first match wins:
+   - a YouTube URL in `message.text` (`youtube.com/watch`, `youtu.be/<id>`,
+     `youtube.com/shorts/<id>`) → `youtube` source;
+   - a native `message.video` → `telegram_video` source;
+   - a `message.document` whose `mime_type` starts `video/` → `telegram_video`
+     source.
+   Anything else gets a single plain **reject message**
+   (`❌ YouTube link (သို့) video ပို့ပါ`) and stops. No commands, no `/start`, no
+   help menu — Telegram UX is deliberately minimal.
 4. **User busy?** If this `telegram_id` already has a `jobs` row, reject:
    `⏳ ယခင် video ပြီးအောင် စောင့်ပါ`. No job.
 5. Otherwise: insert a `jobs` row (its existence is the lock), reply
@@ -54,12 +66,24 @@ per stage** as the job advances (`⬇️ video download နေသည်`, `📝 
 
 ---
 
-## 2. Download + audio extraction — yt-dlp + ffmpeg
+## 2. Download + audio extraction
 
-**Files:** `services/youtube.ts` (download), `services/audio.ts` (extract)
-**In:** `url`, `job.dir`  **Out:** `video.mp4` (delivered as-is), `audio.mp3`
+**Files:** `services/youtube.ts` (yt-dlp), `services/telegram.ts`
+(`getFile`/`downloadFile`), `services/audio.ts` (extract + `probeDuration`)
+**In:** `job.source`, `job.dir`  **Out:** `video.mp4`, `audio.mp3`
 
-**One** network fetch — the video — then audio is pulled from it locally:
+Acquisition branches on `source.kind`; both paths land a `video.mp4` in the job
+dir, after which audio extraction is identical.
+
+- **youtube:** `probe` reads duration + title (gates `MAX_VIDEO_SECONDS`), then
+  yt-dlp downloads `video.mp4`. The video is delivered as-is in stage 6.
+- **telegram_video:** `getFile` resolves the `file_id`; if the reported size
+  exceeds **20 MB** (Telegram Bot API download cap) the job is rejected.
+  `downloadFile` saves `video.mp4`, then `ffprobe` (`probeDuration`) reads its
+  duration to gate `MAX_VIDEO_SECONDS`. The video is **not** re-delivered.
+
+For the YouTube path it is **one** network fetch — the video — then audio is
+pulled from it locally:
 
 ```bash
 # video — prefer H.264 (avc1) + AAC, capped at <=MAX_VIDEO_HEIGHT (default 480p),
@@ -183,17 +207,18 @@ body under load, which would drop that cue) with backoff, up to 5 attempts.
 
 ---
 
-## 6. Egress — Telegram (four files)
+## 6. Egress — Telegram (four files, or three for video messages)
 
 **File:** `services/telegram.ts`
-**In:** `video.mp4`, `en.srt`, `my.srt`, `dub.mp3`  **Out:** four messages to the user
+**In:** `video.mp4`, `en.srt`, `my.srt`, `dub.mp3`  **Out:** four messages
+(youtube) or three (telegram_video) to the user
 
 No mux — the user receives the parts and combines them as they like. All share a
-**base name derived from the video title** (see *Filenames*), so they group in the
-chat:
+**base name** (see *Filenames*), so they group in the chat:
 
 - Send, in order:
-  1. `<slug>.mp4` via `sendVideo`.
+  1. `<slug>.mp4` via `sendVideo` — **youtube source only**; a `telegram_video`
+     job skips this (the user already has the video).
   2. `<slug>.my.srt` via `sendDocument` (mime `application/x-subrip`).
   3. `<slug>.en.srt` via `sendDocument`.
   4. `<slug>.mp3` via `sendAudio` (Telegram's native audio = inline player); on
@@ -202,16 +227,19 @@ chat:
   socket mid-upload (`ECONNRESET`); a failure on one file must not abort the job
   or block the others. Failures are logged, not fatal.
 - **Oversized video (>50 MB):** Telegram's per-file bot upload cap. If `video.mp4`
-  exceeds it, **skip the video with a warning** and still send the SRTs + mp3 — a
-  partial result beats nothing. (The 480p cap from stage 2 makes this rare.)
+  exceeds it (youtube path only), **skip the video with a warning** and still send
+  the SRTs + mp3 — a partial result beats nothing. (The 480p cap from stage 2
+  makes this rare.)
 - The `file_id`s Telegram returns are **not stored** — there is no cache.
 - In a `finally` (success or failure), **wipe all state for the job**: delete the
   `jobs` row (releasing the per-user lock) and remove the temp dir. Mandatory.
 
 ### Filenames
 
-Delivered files share a base name built from the YouTube **title**, slugified to
-lowercase snake_case (`lib/slug.ts`):
+For a **youtube** job, delivered files share a base name built from the YouTube
+**title**, slugified to lowercase snake_case (`lib/slug.ts`). For a
+**telegram_video** job there is no title, so the base is always `video_<jobid>`
+(the uploaded file_name is ignored).
 
 ```
 "How to Cook Rice (2024) — Easy!"  →  how_to_cook_rice_2024_easy

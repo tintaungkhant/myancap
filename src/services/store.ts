@@ -9,16 +9,13 @@ import type { Database } from "bun:sqlite";
 export type NewJob = {
   id: string;
   telegramId: number;
-  url: string;
-  youtubeId: string;
   now: number; // unix ms
 };
 
 export function insertJob(db: Database, job: NewJob): void {
   db.query(
-    `INSERT INTO jobs (id, telegram_id, url, youtube_id, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(job.id, job.telegramId, job.url, job.youtubeId, job.now);
+    `INSERT INTO jobs (id, telegram_id, created_at) VALUES (?, ?, ?)`,
+  ).run(job.id, job.telegramId, job.now);
 }
 
 /** Remove a job row — called when the job finishes, success or fail. */

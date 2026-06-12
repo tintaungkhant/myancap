@@ -5,10 +5,18 @@ Guidance for Claude Code (and humans) working in this repo.
 ## What this is
 
 **MyanCap** — an automated video localization / dubbing pipeline. A user sends
-an English YouTube link to a Telegram bot and gets back four files: the original
-video, the English subtitles, the Myanmar subtitles, and a timed Myanmar
-voice-over. **The bot does not mux them** — the user combines what they want, in
-whatever player (e.g. CapCut).
+English source video to a Telegram bot and gets back the localized parts. Two
+inputs are accepted:
+
+- a **YouTube link** → four files: the original video, English subtitles,
+  Myanmar subtitles, and a timed Myanmar voice-over.
+- a **video message** (native `video` or a `video/*` document) → three files:
+  English subtitles, Myanmar subtitles, and the Myanmar voice-over. The video is
+  **not** sent back (the user already has it). Capped at Telegram's 20 MB
+  Bot-API download limit.
+
+**The bot does not mux them** — the user combines what they want, in whatever
+player (e.g. CapCut).
 
 Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 `whisper-1` API. Translation uses Google Gemini. Speech uses Azure Neural TTS.
@@ -17,13 +25,14 @@ Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 ## The pipeline (6 stages)
 
 ```
-Telegram (YT link)
-  → yt-dlp        download video.mp4 (avc1 ≤480p)   (one fetch, no separate audio)
+Telegram (YT link OR video message)
+  → acquire       YT link → yt-dlp download video.mp4 (avc1 ≤480p)
+                  video message → Telegram getFile + download video.mp4 (≤20 MB)
   → ffmpeg        video.mp4 → audio.mp3             (mono, extracted locally)
   → whisper-1     audio.mp3 → English .srt          (OpenAI API, timestamped)
   → Gemini 2.5 Flash  EN .srt → Myanmar .srt       (translate, 1:1 cues)
   → Azure TTS     MY .srt → timed MP3 voice-over    (per-cue, constant speed)
-  → Telegram      send 4 files: video.mp4 + en.srt + my.srt + dub.mp3
+  → Telegram      send en.srt + my.srt + dub.mp3 (+ video.mp4 for YT links)
 ```
 
 No muxing step. Full detail: [docs/PIPELINE.md](docs/PIPELINE.md).
@@ -63,15 +72,18 @@ src/
     job.ts                 Job type, temp-dir lifecycle, cleanup
   services/
     youtube.ts             yt-dlp: probe() + download() video.mp4 (no audio fetch)
+                           + extractYouTubeId() host guard
     transcribe.ts          OpenAI whisper-1: transcribe() → English srt
     translate.ts           Gemini: translateSrt() EN → MY
     tts.ts                 Azure TTS synth (SSML, retry on 429/empty, global limiter)
     srt-tts.ts             SRT → timed WAV (per-cue or grouped, gap-clamped)
     audio.ts               ffmpeg: extractAudio() (mp4→mp3) + wavToMp3()
-    telegram.ts            Telegram Bot API client (send + file_id)
+                           + probeDuration() (ffprobe, for video-message jobs)
+    telegram.ts            Telegram Bot API client (send + file_id;
+                           getFile/downloadFile to fetch incoming videos)
     store.ts               DB queries: job lifecycle + webhook dedup
   handlers/
-    telegram-webhook.ts    parse update, route YT link → pipeline
+    telegram-webhook.ts    parse update, classify source (YT link / video) → pipeline
   lib/
     srt.ts                 shared SRT parse/serialize helpers
     slug.ts                video title → snake_case delivery filename

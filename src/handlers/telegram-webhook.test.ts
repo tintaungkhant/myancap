@@ -28,6 +28,20 @@ function upd(text: string, opts: { id?: number; from?: number } = {}) {
   };
 }
 
+function updVideo(opts: { id?: number; from?: number; fileId?: string } = {}) {
+  return {
+    update_id: opts.id ?? ++seq + 100000,
+    message: { chat: { id: 9 }, from: { id: opts.from ?? 9 }, video: { file_id: opts.fileId ?? "VID1" } },
+  };
+}
+
+function updDoc(mime: string, opts: { id?: number; from?: number } = {}) {
+  return {
+    update_id: opts.id ?? ++seq + 100000,
+    message: { chat: { id: 9 }, from: { id: opts.from ?? 9 }, document: { file_id: "DOC1", mime_type: mime } },
+  };
+}
+
 test("non-YouTube text → reject message, no job", async () => {
   const db = openDb(":memory:");
   const calls: string[] = [];
@@ -60,7 +74,7 @@ test("repeat link → reprocesses (no cache), enqueues a fresh job", async () =>
 test("busy user → reject, no second job", async () => {
   const db = openDb(":memory:");
   const calls: string[] = [];
-  db.query("INSERT INTO jobs (id, telegram_id, url, youtube_id, created_at) VALUES ('x',9,'u','y',1)").run();
+  db.query("INSERT INTO jobs (id, telegram_id, created_at) VALUES ('x',9,1)").run();
   await handleUpdate(db, new Semaphore(1), upd("https://youtu.be/dQw4w9WgXcQ", { from: 9 }), makeDeps(calls));
   expect(calls.some((c) => c.includes("⏳"))).toBe(true);
   expect(calls).not.toContain("runJob");
@@ -73,5 +87,32 @@ test("new link → inserts job, enqueues runJob", async () => {
   await handleUpdate(db, new Semaphore(1), upd("https://youtu.be/dQw4w9WgXcQ", { from: 50 }), makeDeps(calls));
   await Bun.sleep(5); // let the fire-and-forget sem.run microtask flush
   expect(calls).toContain("runJob");
+  db.close();
+});
+
+test("native video → enqueues runJob", async () => {
+  const db = openDb(":memory:");
+  const calls: string[] = [];
+  await handleUpdate(db, new Semaphore(1), updVideo({ from: 60 }), makeDeps(calls));
+  await Bun.sleep(5);
+  expect(calls).toContain("runJob");
+  db.close();
+});
+
+test("video/* document → enqueues runJob", async () => {
+  const db = openDb(":memory:");
+  const calls: string[] = [];
+  await handleUpdate(db, new Semaphore(1), updDoc("video/mp4", { from: 61 }), makeDeps(calls));
+  await Bun.sleep(5);
+  expect(calls).toContain("runJob");
+  db.close();
+});
+
+test("non-video document → reject, no job", async () => {
+  const db = openDb(":memory:");
+  const calls: string[] = [];
+  await handleUpdate(db, new Semaphore(1), updDoc("application/pdf", { from: 62 }), makeDeps(calls));
+  expect(calls).not.toContain("runJob");
+  expect(calls.some((c) => c.startsWith("msg:"))).toBe(true);
   db.close();
 });

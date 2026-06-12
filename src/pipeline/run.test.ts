@@ -10,7 +10,7 @@ process.env.AZURE_SPEECH_KEY = "a";
 
 import { openDb } from "../lib/db";
 import { insertJob, hasActiveJob } from "../services/store";
-import { createJobDir, cleanupJobDir } from "./job";
+import { createJobDir, cleanupJobDir, type Job } from "./job";
 import { runJob, type RunDeps } from "./run";
 
 afterEach(async () => { await cleanupJobDir("/tmp/myancap-runtest"); });
@@ -22,6 +22,9 @@ function makeDeps(sent: string[]): RunDeps {
       await Bun.write(`${dir}/video.mp4`, "VIDEODATA");
       return { videoPath: `${dir}/video.mp4` };
     },
+    getFile: async () => ({ filePath: "videos/f.mp4", fileSize: 1000 }),
+    downloadFile: async (_p: string, dest: string) => { await Bun.write(dest, "VIDEODATA"); },
+    probeDuration: async () => 100,
     extractAudio: async (_v: string, o: string) => { await Bun.write(o, "AUDIO"); },
     transcribe: async () => "1\n00:00:01,000 --> 00:00:02,000\nHi\n",
     translateSrt: async () => "1\n00:00:01,000 --> 00:00:02,000\nმინ\n",
@@ -37,14 +40,18 @@ function makeDeps(sent: string[]): RunDeps {
   };
 }
 
-test("happy path: sends 4 files, clears job, cleans dir", async () => {
+const ytSource = { kind: "youtube", url: "u", youtubeId: "ytid" } as const;
+const tgSource = { kind: "telegram_video", fileId: "FID" } as const;
+
+test("youtube happy path: sends 4 files, clears job, cleans dir", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run1");
-  insertJob(db, { id: "run1", telegramId: 5, url: "u", youtubeId: "ytid", now: 1 });
+  insertJob(db, { id: "run1", telegramId: 5, now: 1 });
 
   const sent: string[] = [];
-  await runJob(db, { id: "run1", telegramId: 5, chatId: 5, url: "u", youtubeId: "ytid", dir }, makeDeps(sent));
+  const job: Job = { id: "run1", telegramId: 5, chatId: 5, dir, source: ytSource };
+  await runJob(db, job, makeDeps(sent));
 
   expect(sent).toEqual(["video", "my", "en", "audio"]);
   // Ephemeral: job row deleted (lock released), temp dir gone, nothing cached.
@@ -55,11 +62,49 @@ test("happy path: sends 4 files, clears job, cleans dir", async () => {
   db.close();
 });
 
-test("oversized video: skips video, warns, still sends srt + audio", async () => {
+test("telegram_video: sends 3 files (NO video), clears job, cleans dir", async () => {
+  const db = openDb(":memory:");
+  await mkdir("/tmp/myancap-runtest", { recursive: true });
+  const dir = await createJobDir("runtg");
+  insertJob(db, { id: "runtg", telegramId: 8, now: 1 });
+
+  const sent: string[] = [];
+  const job: Job = { id: "runtg", telegramId: 8, chatId: 8, dir, source: tgSource };
+  await runJob(db, job, makeDeps(sent));
+
+  expect(sent).toEqual(["my", "en", "audio"]); // no "video"
+  expect(hasActiveJob(db, 8)).toBe(false);
+  expect(existsSync(dir)).toBe(false);
+  db.close();
+});
+
+test("telegram_video oversize: rejects, sends nothing, cleans dir", async () => {
+  const db = openDb(":memory:");
+  await mkdir("/tmp/myancap-runtest", { recursive: true });
+  const dir = await createJobDir("runbig");
+  insertJob(db, { id: "runbig", telegramId: 11, now: 1 });
+
+  const sent: string[] = [];
+  const msgs: string[] = [];
+  const deps = makeDeps(sent);
+  deps.getFile = async () => ({ filePath: "videos/f.mp4", fileSize: 21 * 1024 * 1024 });
+  deps.sendMessage = async (_c: number, m: string) => { msgs.push(m); };
+
+  const job: Job = { id: "runbig", telegramId: 11, chatId: 11, dir, source: tgSource };
+  await runJob(db, job, deps);
+
+  expect(sent).toEqual([]); // failed in stage 1, nothing sent
+  expect(msgs.some((m) => m.includes("❌"))).toBe(true);
+  expect(hasActiveJob(db, 11)).toBe(false);
+  expect(existsSync(dir)).toBe(false);
+  db.close();
+});
+
+test("youtube oversized video file: skips video, warns, still sends srt + audio", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run3");
-  insertJob(db, { id: "run3", telegramId: 7, url: "u", youtubeId: "yt3", now: 1 });
+  insertJob(db, { id: "run3", telegramId: 7, now: 1 });
 
   const sent: string[] = [];
   const msgs: string[] = [];
@@ -70,7 +115,8 @@ test("oversized video: skips video, warns, still sends srt + audio", async () =>
   };
   deps.sendMessage = async (_c: number, m: string) => { msgs.push(m); };
 
-  await runJob(db, { id: "run3", telegramId: 7, chatId: 7, url: "u", youtubeId: "yt3", dir }, deps);
+  const job: Job = { id: "run3", telegramId: 7, chatId: 7, dir, source: ytSource };
+  await runJob(db, job, deps);
 
   expect(sent).toEqual(["my", "en", "audio"]); // video skipped
   expect(msgs.some((m) => m.includes("ကြီးလွန်း"))).toBe(true);
@@ -82,12 +128,13 @@ test("failure path: deletes job row, notifies, still cleans the dir", async () =
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run2");
-  insertJob(db, { id: "run2", telegramId: 6, url: "u", youtubeId: "yt2", now: 1 });
+  insertJob(db, { id: "run2", telegramId: 6, now: 1 });
 
   const deps = makeDeps([]);
   deps.transcribe = async () => { throw new Error("whisper boom"); };
 
-  await runJob(db, { id: "run2", telegramId: 6, chatId: 6, url: "u", youtubeId: "yt2", dir }, deps);
+  const job: Job = { id: "run2", telegramId: 6, chatId: 6, dir, source: ytSource };
+  await runJob(db, job, deps);
 
   expect(hasActiveJob(db, 6)).toBe(false); // row deleted on failure
   const jobRows = db.query("SELECT COUNT(*) AS n FROM jobs").get() as any;

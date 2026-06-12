@@ -20,8 +20,9 @@ function makeDeps(sent: string[]): RunDeps {
     probe: async () => ({ durationSeconds: 100, title: "My Clip" }),
     download: async (_u: string, dir: string) => {
       await Bun.write(`${dir}/video.mp4`, "VIDEODATA");
-      return { videoPath: `${dir}/video.mp4`, audioPath: `${dir}/audio.mp3` };
+      return { videoPath: `${dir}/video.mp4` };
     },
+    extractAudio: async (_v: string, o: string) => { await Bun.write(o, "AUDIO"); },
     transcribe: async () => "1\n00:00:01,000 --> 00:00:02,000\nHi\n",
     translateSrt: async () => "1\n00:00:01,000 --> 00:00:02,000\nმინ\n",
     srtToSpeech: async () => new Uint8Array([1, 2, 3]),
@@ -36,7 +37,7 @@ function makeDeps(sent: string[]): RunDeps {
   };
 }
 
-test("happy path: sends 3 files, caches result, clears job, cleans dir", async () => {
+test("happy path: sends 4 files, clears job, cleans dir", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run1");
@@ -65,7 +66,7 @@ test("oversized video: skips video, warns, still sends srt + audio", async () =>
   const deps = makeDeps(sent);
   deps.download = async (_u: string, d: string) => {
     await Bun.write(`${d}/video.mp4`, new Uint8Array(51 * 1024 * 1024)); // >50 MB
-    return { videoPath: `${d}/video.mp4`, audioPath: `${d}/audio.mp3` };
+    return { videoPath: `${d}/video.mp4` };
   };
   deps.sendMessage = async (_c: number, m: string) => { msgs.push(m); };
 
@@ -77,7 +78,7 @@ test("oversized video: skips video, warns, still sends srt + audio", async () =>
   db.close();
 });
 
-test("failure path: marks failed, notifies, still cleans the dir", async () => {
+test("failure path: deletes job row, notifies, still cleans the dir", async () => {
   const db = openDb(":memory:");
   await mkdir("/tmp/myancap-runtest", { recursive: true });
   const dir = await createJobDir("run2");

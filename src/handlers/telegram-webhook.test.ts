@@ -7,7 +7,7 @@ process.env.GEMINI_API_KEY = "g";
 process.env.AZURE_SPEECH_KEY = "a";
 
 import { openDb } from "../lib/db";
-import { Semaphore } from "../pipeline/queue";
+import { Semaphore } from "../lib/semaphore";
 import { handleUpdate, type WebhookDeps } from "./telegram-webhook";
 import { cleanupJobDir } from "../pipeline/job";
 

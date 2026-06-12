@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { Semaphore } from "./queue";
+import { Semaphore } from "./semaphore";
 
 test("max=1 serializes: second task starts only after first releases", async () => {
   const sem = new Semaphore(1);

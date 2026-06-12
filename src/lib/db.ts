@@ -7,7 +7,11 @@
 import { Database } from "bun:sqlite";
 
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS jobs (
+-- jobs hold no durable state (a row = a live per-user lock) and are wiped at
+-- boot anyway, so DROP + recreate: this also force-migrates any older on-disk
+-- schema from a mounted volume (e.g. a since-removed updated_at column).
+DROP TABLE IF EXISTS jobs;
+CREATE TABLE jobs (
   id          TEXT PRIMARY KEY,
   telegram_id INTEGER NOT NULL,
   url         TEXT NOT NULL,
@@ -15,6 +19,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at  INTEGER NOT NULL
 );
 
+-- processed_updates must survive restarts (webhook dedup), so never dropped.
 CREATE TABLE IF NOT EXISTS processed_updates (
   update_id   INTEGER PRIMARY KEY,
   seen_at     INTEGER NOT NULL

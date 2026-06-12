@@ -21,8 +21,25 @@ export type TtsOptions = {
   rate?: number;
 };
 
+import { Semaphore } from "../lib/semaphore";
+
 export const DEFAULT_VOICE = "my-MM-ThihaNeural";
 const DEFAULT_FORMAT = "audio-16khz-128kbitrate-mono-mp3";
+
+// Process-wide cap on concurrent Azure TTS requests, shared across ALL jobs.
+// The per-job concurrency (srt-tts) limits one job; this bounds the TOTAL so
+// raising MAX_CONCURRENT_JOBS can't fan out into an Azure 429 storm. Default 8
+// leaves headroom over a single job's 3; lower it (env) if Azure throttles.
+const GLOBAL_TTS_LIMIT = 8;
+let limiter: Semaphore | undefined;
+function ttsLimiter(): Semaphore {
+  if (!limiter) {
+    const raw = Number(process.env.AZURE_TTS_MAX_CONCURRENCY);
+    const max = Number.isInteger(raw) && raw > 0 ? raw : GLOBAL_TTS_LIMIT;
+    limiter = new Semaphore(max);
+  }
+  return limiter;
+}
 
 export function escapeXml(text: string): string {
   return text
@@ -99,6 +116,17 @@ export async function synthesizeSsml(
 
   const url = `https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`;
 
+  // Hold a global permit for the whole request (including backoff sleeps) so a
+  // throttled call doesn't free its slot for another to immediately pile on.
+  return ttsLimiter().run(() => synthesizeOnce(url, key, ssml, format));
+}
+
+async function synthesizeOnce(
+  url: string,
+  key: string,
+  ssml: string,
+  format: string,
+): Promise<ArrayBuffer> {
   // Azure throttles bursts with 429 ("Downstream Service Throttled"). Retry a
   // few times with backoff (honoring Retry-After) before giving up.
   const MAX_ATTEMPTS = 5;

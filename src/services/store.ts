@@ -26,14 +26,6 @@ export function deleteJob(db: Database, id: string): void {
   db.query(`DELETE FROM jobs WHERE id = ?`).run(id);
 }
 
-/**
- * Wipe all job rows. Called once at boot: the in-process queue doesn't survive
- * restart, so any leftover rows are stale locks from a crash — clear them.
- */
-export function clearAllJobs(db: Database): void {
-  db.query(`DELETE FROM jobs`).run();
-}
-
 /** True if this user has a job in flight (a row exists = the per-user lock). */
 export function hasActiveJob(db: Database, telegramId: number): boolean {
   const row = db

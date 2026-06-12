@@ -6,7 +6,7 @@ import * as youtube from "../services/youtube";
 import { transcribe } from "../services/transcribe";
 import { translateSrt } from "../services/translate";
 import { srtToSpeech } from "../services/srt-tts";
-import { wavToMp3 } from "../services/audio";
+import { wavToMp3, extractAudio } from "../services/audio";
 import {
   sendVideo,
   sendDocument,
@@ -26,6 +26,7 @@ const VIDEO_MAX_BYTES = 50 * 1024 * 1024;
 export type RunDeps = {
   probe: typeof youtube.probe;
   download: typeof youtube.download;
+  extractAudio: typeof extractAudio;
   transcribe: typeof transcribe;
   translateSrt: typeof translateSrt;
   srtToSpeech: typeof srtToSpeech;
@@ -39,6 +40,7 @@ export type RunDeps = {
 const defaultDeps: RunDeps = {
   probe: youtube.probe,
   download: youtube.download,
+  extractAudio,
   transcribe,
   translateSrt,
   srtToSpeech,
@@ -69,7 +71,9 @@ export async function runJob(
       const max = Math.round(cfg.maxVideoSeconds / 60);
       throw new Error(`Video too long (max ${max} min)`);
     }
-    const { videoPath, audioPath } = await deps.download(job.url, job.dir);
+    const { videoPath } = await deps.download(job.url, job.dir);
+    const audioPath = join(job.dir, "audio.mp3");
+    await deps.extractAudio(videoPath, audioPath);
 
     stage("📝 စာတန်းထိုးထုတ်နေသည်");
     const enSrt = await deps.transcribe(audioPath);

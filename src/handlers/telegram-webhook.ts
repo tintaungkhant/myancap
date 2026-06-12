@@ -9,7 +9,7 @@ import {
   insertJob,
 } from "../services/store";
 import { newJobId, createJobDir, type Job } from "../pipeline/job";
-import type { Semaphore } from "../pipeline/queue";
+import type { Semaphore } from "../lib/semaphore";
 import { runJob } from "../pipeline/run";
 
 type Update = {

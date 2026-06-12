@@ -50,16 +50,6 @@ export function videoArgs(url: string, dir: string, maxHeight: number): string[]
   ];
 }
 
-export function audioArgs(url: string, dir: string): string[] {
-  return [
-    "-f", "bestaudio", "-x",
-    "--audio-format", "mp3", "--audio-quality", "5",
-    "--postprocessor-args", "-ac 1",
-    "-o", `${dir}/audio.%(ext)s`,
-    url,
-  ];
-}
-
 async function run(args: string[]): Promise<string> {
   const cfg = getConfig();
   const common = extraArgs(cfg.ytdlpCookies, cfg.ytdlpPlayerClient);
@@ -78,13 +68,17 @@ export async function probe(url: string): Promise<VideoMeta> {
   return parseProbe(await run(probeArgs(url)));
 }
 
-/** Download video.mp4 and audio.mp3 into `dir`. Returns their paths. */
+/**
+ * Download video.mp4 into `dir`. Returns its path. Audio is NOT fetched
+ * separately — the merged mp4 already contains the AAC track, so the caller
+ * extracts audio locally with ffmpeg (one network download instead of two,
+ * and one fewer YouTube bot-check to trip).
+ */
 export async function download(
   url: string,
   dir: string,
-): Promise<{ videoPath: string; audioPath: string }> {
+): Promise<{ videoPath: string }> {
   const cfg = getConfig();
   await run(videoArgs(url, dir, cfg.maxVideoHeight));
-  await run(audioArgs(url, dir));
-  return { videoPath: `${dir}/video.mp4`, audioPath: `${dir}/audio.mp3` };
+  return { videoPath: `${dir}/video.mp4` };
 }

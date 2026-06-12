@@ -18,8 +18,9 @@ Single service, Bun + Elysia, fully Dockerized. Transcription uses the OpenAI
 
 ```
 Telegram (YT link)
-  → yt-dlp        download video.mp4 (avc1 ≤480p) + extract audio.mp3
-  → whisper-1     audio.mp3 → English .srt        (OpenAI API, timestamped)
+  → yt-dlp        download video.mp4 (avc1 ≤480p)   (one fetch, no separate audio)
+  → ffmpeg        video.mp4 → audio.mp3             (mono, extracted locally)
+  → whisper-1     audio.mp3 → English .srt          (OpenAI API, timestamped)
   → Gemini 2.5 Flash  EN .srt → Myanmar .srt       (translate, 1:1 cues)
   → Azure TTS     MY .srt → timed MP3 voice-over    (per-cue, constant speed)
   → Telegram      send 4 files: video.mp4 + en.srt + my.srt + dub.mp3
@@ -60,14 +61,13 @@ src/
   pipeline/
     run.ts                 orchestrates the 6 stages for one job
     job.ts                 Job type, temp-dir lifecycle, cleanup
-    queue.ts               in-process concurrency guard
   services/
-    youtube.ts             yt-dlp: downloadVideo() + extractAudio() (mp3)
+    youtube.ts             yt-dlp: probe() + download() video.mp4 (no audio fetch)
     transcribe.ts          OpenAI whisper-1: transcribe() → English srt
     translate.ts           Gemini: translateSrt() EN → MY
-    tts.ts                 Azure TTS synth (SSML, retry on 429/empty)
-    srt-tts.ts             SRT → timed WAV (per-cue, gap-clamped)
-    audio.ts               ffmpeg WAV → MP3
+    tts.ts                 Azure TTS synth (SSML, retry on 429/empty, global limiter)
+    srt-tts.ts             SRT → timed WAV (per-cue or grouped, gap-clamped)
+    audio.ts               ffmpeg: extractAudio() (mp4→mp3) + wavToMp3()
     telegram.ts            Telegram Bot API client (send + file_id)
     store.ts               DB queries: job lifecycle + webhook dedup
   handlers/
@@ -75,6 +75,7 @@ src/
   lib/
     srt.ts                 shared SRT parse/serialize helpers
     slug.ts                video title → snake_case delivery filename
+    semaphore.ts           in-process counting semaphore (job queue + TTS limiter)
     db.ts                  bun:sqlite connection + schema bootstrap (WAL)
 docs/                      architecture, pipeline, setup, docker, conventions, todo
 Dockerfile                 single-stage Bun runtime (ffmpeg + yt-dlp)
@@ -95,10 +96,15 @@ Full rationale: [docs/STRUCTURE.md](docs/STRUCTURE.md).
 The full pipeline is **implemented and running** (all 6 stages, ingress gates,
 Docker). Notable hardening learned from production runs:
 
-- **TTS robustness** — per-cue Azure synthesis, bounded concurrency
-  (`TTS_CONCURRENCY`) to avoid 429s, retry on 429/503 **and empty 200s** (Azure
-  silently drops cues under load), and a **30s clamp** on inter-cue silence (a
-  hallucinated far-future timestamp once produced 59 min of silence → 74 MB mp3).
+- **TTS robustness** — per-cue Azure synthesis (or grouped via
+  `TTS_GROUP_SECONDS`), bounded per-job concurrency (`TTS_CONCURRENCY`) plus a
+  **process-wide limiter** (`AZURE_TTS_MAX_CONCURRENCY`) so many jobs can't 429
+  Azure, retry on 429/503 **and empty 200s** (Azure silently drops cues under
+  load), and a **30s clamp** on inter-cue silence (a hallucinated far-future
+  timestamp once produced 59 min of silence → 74 MB mp3).
+- **Single download** — yt-dlp fetches `video.mp4` once; `audio.mp3` is extracted
+  locally with ffmpeg (the mp4 already has the AAC track). Half the bandwidth and
+  one fewer YouTube bot-check than the old two-fetch path.
 - **Audio format = MP3** (not aac/m4a) — raw ADTS `.aac` is headerless, so players
   mis-estimate its duration and cut off at long silences; mp3 carries real
   duration metadata.

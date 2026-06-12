@@ -1,13 +1,11 @@
 import { Elysia } from "elysia";
 import { getConfig } from "./config";
 import { openDb } from "./lib/db";
-import { clearAllJobs } from "./services/store";
-import { Semaphore } from "./pipeline/queue";
+import { Semaphore } from "./lib/semaphore";
 import { handleUpdate, verifySecret } from "./handlers/telegram-webhook";
 
 const cfg = getConfig();
-const db = openDb(cfg.databasePath);
-clearAllJobs(db); // no jobs survive a restart — drop any stale locks
+const db = openDb(cfg.databasePath); // recreates the jobs table — no lock survives a restart
 const sem = new Semaphore(cfg.maxConcurrentJobs);
 
 const app = new Elysia()

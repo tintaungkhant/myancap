@@ -33,6 +33,7 @@ cp .env.example .env
 | `TTS_MAX_RATE`            | no       | `1`                     | Max TTS speed-up; 1 = constant speed |
 | `TTS_CONCURRENCY`         | no       | `3`                     | Max parallel TTS calls (lower if 429)|
 | `TTS_GROUP_SECONDS`       | no       | `0`                     | Batch cues per ~N s/call; 0 = per-cue|
+| `AZURE_TTS_MAX_CONCURRENCY`| no      | `8`                     | Global cap on concurrent Azure calls |
 | `MAX_VIDEO_HEIGHT`        | no       | `480`                   | Cap downloaded video resolution      |
 | `YTDLP_COOKIES`           | no       | —                       | Path to cookies.txt (bot-check)      |
 | `YTDLP_PLAYER_CLIENT`     | no       | —                       | yt-dlp player client (e.g. `tv`)     |

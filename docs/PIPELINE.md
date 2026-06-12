@@ -18,8 +18,9 @@ type Job = {
 };
 ```
 
-The matching `jobs` row carries `status` (`queued|running`), `stage`, and
-`error`, and exists **only while processing** — it is deleted when the job
+The matching `jobs` row carries only `id`, `telegram_id`, `url`, `youtube_id`,
+and `created_at`; its **mere existence is the per-user lock**. No status/stage
+is tracked — the pipeline runs in memory and the row is deleted when the job
 finishes. The in-memory `Job` threads file paths. There is no result cache.
 
 ---
@@ -39,10 +40,10 @@ Gates run in this order; the first that fires short-circuits:
    non-YouTube host (also the SSRF guard) — gets a single plain **reject message**
    (`❌ YouTube link ပို့ပါ`) and stops. No commands, no `/start`, no help menu —
    Telegram UX is deliberately minimal.
-4. **User busy?** If this `telegram_id` has a `queued`/`running` job, reject:
+4. **User busy?** If this `telegram_id` already has a `jobs` row, reject:
    `⏳ ယခင် video ပြီးအောင် စောင့်ပါ`. No job.
-5. Otherwise: insert a `jobs` row (`status='queued'`), reply `🎬 လုပ်ဆောင်နေသည်`,
-   enqueue, return `200` immediately.
+5. Otherwise: insert a `jobs` row (its existence is the lock), reply
+   `🎬 လုပ်ဆောင်နေသည်`, enqueue, return `200` immediately.
 
 There is **no cache gate** — every accepted link is reprocessed from scratch.
 
@@ -53,12 +54,12 @@ per stage** as the job advances (`⬇️ video download နေသည်`, `📝 
 
 ---
 
-## 2. Download + audio extraction — yt-dlp
+## 2. Download + audio extraction — yt-dlp + ffmpeg
 
-**File:** `services/youtube.ts`
+**Files:** `services/youtube.ts` (download), `services/audio.ts` (extract)
 **In:** `url`, `job.dir`  **Out:** `video.mp4` (delivered as-is), `audio.mp3`
 
-Two outputs from the one source:
+**One** network fetch — the video — then audio is pulled from it locally:
 
 ```bash
 # video — prefer H.264 (avc1) + AAC, capped at <=MAX_VIDEO_HEIGHT (default 480p),
@@ -67,13 +68,13 @@ Two outputs from the one source:
 yt-dlp -f 'bv*[vcodec^=avc1][height<=480]+ba[acodec^=mp4a]/b[ext=mp4][vcodec^=avc1][height<=480]/bv*[ext=mp4][height<=480]+ba/b[height<=480][vcodec!=none]/b[vcodec!=none]' \
        --merge-output-format mp4 -o "<dir>/video.%(ext)s" <url>
 
-# audio for transcription — compressed mono mp3, kept small for the API upload
-yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 5 \
-       --postprocessor-args "-ac 1" \
-       -o "<dir>/audio.%(ext)s" <url>
+# audio for transcription — extracted from the mp4 we just downloaded (the mp4
+# already carries the AAC track), transcoded to compressed mono mp3. No second
+# yt-dlp fetch: half the bandwidth, one fewer YouTube bot-check to trip.
+ffmpeg -i "<dir>/video.mp4" -vn -ac 1 -c:a libmp3lame -q:a 5 "<dir>/audio.mp3"
 ```
 
-Every yt-dlp call also gets `--cookies <YTDLP_COOKIES>` and/or
+The yt-dlp call also gets `--cookies <YTDLP_COOKIES>` and/or
 `--extractor-args youtube:player_client=<YTDLP_PLAYER_CLIENT>` when those env vars
 are set — to get past YouTube's "confirm you're not a bot" / SABR gating.
 

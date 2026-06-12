@@ -86,9 +86,9 @@ docs
 
 - `yt-dlp` ages fast against YouTube changes. Rebuild periodically (or
   auto-update the binary) to avoid extractor breakage.
-- `ffmpeg` is used for yt-dlp's audio extraction and for the WAV→MP3 voice-over
-  transcode (needs `libmp3lame`, included in Debian's ffmpeg) — keep it installed
-  even though there's no muxing step.
+- `ffmpeg` extracts `audio.mp3` from the downloaded `video.mp4` and does the
+  WAV→MP3 voice-over transcode (needs `libmp3lame`, included in Debian's ffmpeg)
+  — keep it installed even though there's no muxing step.
 - Mount `WORK_DIR` on a tmpfs or fast disk; jobs do real media I/O there.
 - The image is now arch-agnostic — no AVX2/NEON concern, since nothing is
   compiled. Build for amd64 or arm64 freely.

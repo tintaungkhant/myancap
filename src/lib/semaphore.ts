@@ -1,4 +1,4 @@
-/** Minimal in-process counting semaphore. Caps concurrent jobs. */
+/** Minimal in-process counting semaphore. Caps concurrent work. */
 export class Semaphore {
   private permits: number;
   private waiters: Array<() => void> = [];

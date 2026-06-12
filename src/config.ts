@@ -14,6 +14,7 @@ export type Config = {
   maxTtsRate: number;
   ttsConcurrency: number;
   ttsGroupSeconds: number;
+  azureTtsMaxConcurrency: number;
   ytdlpCookies?: string;
   ytdlpPlayerClient?: string;
   databasePath: string;
@@ -85,6 +86,10 @@ export function loadConfig(env: Env = process.env): Config {
     // 0 = per-cue synthesis (one Azure call per cue). >0 = group cues into one
     // call per ~N spoken seconds, cutting call volume (see srt-tts.ts).
     ttsGroupSeconds: nonNegInt(env, "TTS_GROUP_SECONDS", 0, errors),
+    // Process-wide cap on concurrent Azure calls across ALL jobs (the per-job
+    // TTS_CONCURRENCY only bounds one job). Read by services/tts.ts. Validated
+    // here so a bad value fails fast at boot; keep the default in sync with tts.ts.
+    azureTtsMaxConcurrency: posInt(env, "AZURE_TTS_MAX_CONCURRENCY", 8, errors),
     ytdlpCookies: env.YTDLP_COOKIES,
     ytdlpPlayerClient: env.YTDLP_PLAYER_CLIENT,
     databasePath: env.DATABASE_PATH || "/data/myancap.db",

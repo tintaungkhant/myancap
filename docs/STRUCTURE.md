@@ -24,22 +24,22 @@ myancap-server/
     ├── config.ts             load + validate env once; typed config object
     ├── pipeline/
     │   ├── run.ts            orchestrate the 6 stages for one job
-    │   ├── job.ts            Job type + temp-dir create/cleanup
-    │   └── queue.ts          in-process concurrency semaphore
+    │   └── job.ts            Job type + temp-dir create/cleanup
     ├── services/             one external dependency per file, stateless
-    │   ├── youtube.ts        yt-dlp wrapper (video + mp3)
+    │   ├── youtube.ts        yt-dlp wrapper: probe + download video.mp4 (no audio fetch)
     │   ├── transcribe.ts     OpenAI whisper-1 REST client
     │   ├── translate.ts      Gemini REST client
-    │   ├── tts.ts            Azure TTS single-utterance synth      (exists)
-    │   ├── srt-tts.ts        SRT → timed WAV, duration-matched     (exists)
-    │   ├── audio.ts          ffmpeg WAV → MP3
-    │   ├── telegram.ts       Telegram Bot API client              (exists)
+    │   ├── tts.ts            Azure TTS synth (SSML, retry, global limiter)
+    │   ├── srt-tts.ts        SRT → timed WAV (per-cue or grouped)
+    │   ├── audio.ts          ffmpeg: extractAudio (mp4→mp3) + wavToMp3
+    │   ├── telegram.ts       Telegram Bot API client
     │   └── store.ts          DB queries: job lifecycle + webhook dedup
     ├── handlers/
     │   └── telegram-webhook.ts   parse update → gates → enqueue job
     └── lib/
         ├── srt.ts            shared SRT parse/serialize (extracted from srt-tts)
         ├── slug.ts           title → lowercase snake_case filename
+        ├── semaphore.ts      in-process counting semaphore (queue + TTS limiter)
         └── db.ts             bun:sqlite connection + schema bootstrap (WAL)
 ```
 

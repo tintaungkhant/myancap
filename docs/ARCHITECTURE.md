@@ -22,7 +22,8 @@ the bot does not mux them.**
             │        │ ack fast, enqueue job                        │
             │        ▼                                              │
             │  pipeline/run.ts  (one temp dir per job)              │
-            │   1 youtube.ts    yt-dlp ─▶ video.mp4 + audio.mp3     │
+            │   1 youtube.ts    yt-dlp ─▶ video.mp4                 │
+            │     audio.ts      ffmpeg ─▶ audio.mp3 (from the mp4)  │
             │   2 transcribe.ts whisper-1 ─▶ en.srt                 │
             │   3 translate.ts  Gemini ─▶ my.srt                    │
             │   4 srt-tts.ts    Azure TTS ─▶ dub.wav (per-cue)      │
@@ -67,14 +68,17 @@ Runs the six stages in order for a single job, threading file paths through a
 `Job` context. Any stage throwing aborts the job; the error is reported to the
 chat and the temp dir is cleaned up.
 
-### Concurrency — `pipeline/queue.ts`
-ffmpeg is CPU-heavy; the cloud APIs have rate limits. An in-process semaphore
-caps concurrent jobs (`MAX_CONCURRENT_JOBS`, default `1`). Jobs beyond the cap
-wait. This is deliberately simple — see *Scaling*.
+### Concurrency — `lib/semaphore.ts`
+ffmpeg is CPU-heavy; the cloud APIs have rate limits. A counting semaphore
+(`lib/semaphore.ts`) is used in two places: `index.ts` caps concurrent **jobs**
+(`MAX_CONCURRENT_JOBS`, default `1`), and `services/tts.ts` holds a process-wide
+limiter on concurrent **Azure TTS calls** (`AZURE_TTS_MAX_CONCURRENCY`, default
+`8`) so raising the job cap can't fan out into a 429 storm. Work beyond a cap
+waits. Deliberately simple — see *Scaling*.
 
 **One active job per user.** Before accepting a new link, the handler checks the
-`jobs` table for an existing `queued` or `running` job from the same
-`telegram_id`. If one exists, the new request is **rejected with a message**
+`jobs` table for an existing row from the same `telegram_id` (the row's existence
+is the lock). If one exists, the new request is **rejected with a message**
 (e.g. `⏳ You already have a video in progress — wait for it to finish.`) and no
 job is created. This bounds load and avoids a user flooding the queue.
 
@@ -141,9 +145,11 @@ CREATE TABLE processed_updates (               -- webhook idempotency
 
 ## Scaling (future, not v1)
 
-The in-process queue is the seam. To scale out: replace `queue.ts` with a real
-broker (Redis / BullMQ), move `pipeline/run.ts` into a worker process, and make
-jobs durable. The service interface (webhook → enqueue) does not change.
+The in-process semaphore (`lib/semaphore.ts`) is the seam. To scale out: replace
+it with a real broker (Redis / BullMQ), move `pipeline/run.ts` into a worker
+process, and make jobs durable. The per-process Azure TTS limiter would become a
+shared/distributed rate limiter. The service interface (webhook → enqueue) does
+not change.
 
 ## Security notes
 
